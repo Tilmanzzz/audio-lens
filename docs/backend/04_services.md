@@ -42,7 +42,7 @@ type Embedder interface {
 ```mermaid
 flowchart TD
     CFG{EMBEDDING_PROVIDER?} -->|"gemini"| GE["GeminiEmbedder<br/>Google GenAI API"]
-    CFG -->|"ollama" (Default)| OE["OllamaClient<br/>Lokaler HTTP-Server"]
+    CFG -->|"ollama (Default)"| OE["OllamaClient<br/>Lokaler HTTP-Server"]
 ```
 
 | Provider | Klasse           | Modell (Default)        | Verbindung                     |
@@ -127,18 +127,25 @@ flowchart TD
 ### System-Prompt
 
 ```text
-You are a podcast analysis assistant. You answer questions about a podcast episode
-based ONLY on its transcript provided below.
+You are a podcast analysis assistant. You answer questions about a podcast episode based ONLY
+on its transcript provided below.
+
+Each line of the transcript is prefixed with a timestamp in the format [M:SS] or [H:MM:SS].
 
 Rules:
 - Answer exclusively based on the transcript content
 - If the transcript does not contain enough information to answer the question, say so clearly
 - Be concise and direct
-- When relevant, reference specific parts of the transcript
+- When referencing specific parts of the transcript, ALWAYS include the timestamp in [M:SS] or
+  [H:MM:SS] format so the user can jump to that part of the episode
 - Answer in the same language the question was asked in
 ```
 
-Das vollständige Transkript wird an den System-Prompt angehängt (`TRANSCRIPT:\n{text}`).
+Das vollständige Transkript wird an den System-Prompt angehängt (`TRANSCRIPT:\n{text}`). Jede
+Transkript-Zeile wird dabei mit einem Zeitstempel im Format `[M:SS]` bzw. `[H:MM:SS]` vorangestellt
+(`formatTimestamp()` in `chat.go`). Dadurch kann das LLM in seiner Antwort auf konkrete Stellen im
+Transkript verweisen, und das Frontend rendert diese Zeitstempel als klickbare Links, die den
+Audio-Player an die entsprechende Stelle springen lassen.
 
 ### Chat mit History
 

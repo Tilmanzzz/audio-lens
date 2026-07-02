@@ -9,16 +9,58 @@ definitions:
       status:
         type: integer
     type: object
-  model.CreateConversationRequest:
+  model.ChapterCard:
     properties:
+      chapter_idx:
+        type: integer
+      end_time:
+        type: number
+      id:
+        type: string
+      start_time:
+        type: number
+      summary:
+        type: string
+      title:
+        type: string
+    type: object
+  model.ChaptersResponse:
+    properties:
+      chapters:
+        items:
+          $ref: '#/definitions/model.ChapterCard'
+        type: array
       episode_id:
         type: string
-    required:
-    - episode_id
     type: object
-  model.CreateConversationResponse:
+  model.ChatMessage:
     properties:
-      conversation_id:
+      content:
+        type: string
+      role:
+        enum:
+        - user
+        - assistant
+        type: string
+    required:
+    - content
+    - role
+    type: object
+  model.ChatRequest:
+    properties:
+      history:
+        items:
+          $ref: '#/definitions/model.ChatMessage'
+        type: array
+      question:
+        maxLength: 10000
+        type: string
+    required:
+    - question
+    type: object
+  model.ChatResponse:
+    properties:
+      answer:
         type: string
     type: object
   model.EpisodeCard:
@@ -31,13 +73,19 @@ definitions:
         type: string
       podcast_name:
         type: string
+      processing_complete:
+        type: boolean
       published_at:
+        type: string
+      summary:
         type: string
       title:
         type: string
     type: object
   model.EpisodeDetail:
     properties:
+      audio_url:
+        type: string
       cover_url:
         type: string
       duration_seconds:
@@ -46,7 +94,11 @@ definitions:
         type: string
       podcast_name:
         type: string
+      processing_complete:
+        type: boolean
       published_at:
+        type: string
+      summary:
         type: string
       title:
         type: string
@@ -69,8 +121,12 @@ definitions:
     type: object
   model.FactCheckClaim:
     properties:
+      chapter_id:
+        type: string
       claim:
         type: string
+      claim_idx:
+        type: integer
       explanation:
         type: string
       id:
@@ -79,8 +135,6 @@ definitions:
         items:
           type: string
         type: array
-      start_time:
-        type: integer
       verdict:
         type: string
     type: object
@@ -97,56 +151,66 @@ definitions:
     properties:
       database:
         type: string
+      embedding:
+        type: string
       minio:
         type: string
       status:
         type: string
     type: object
-  model.SendMessageContext:
+  model.SearchHighlight:
     properties:
-      current_time:
-        type: integer
-    type: object
-  model.SendMessageRequest:
-    properties:
-      context:
-        $ref: '#/definitions/model.SendMessageContext'
-      text:
-        maxLength: 10000
-        type: string
-    required:
-    - text
-    type: object
-  model.TopicCard:
-    properties:
-      emotion:
-        type: string
-      id:
-        type: string
+      score:
+        type: number
       start_time:
-        type: integer
-      summary:
-        type: string
-      topic:
+        type: number
+      text:
         type: string
     type: object
-  model.TopicsResponse:
+  model.SearchResponse:
     properties:
+      items:
+        items:
+          $ref: '#/definitions/model.SearchResultItem'
+        type: array
+      query:
+        type: string
+      total:
+        type: integer
+    type: object
+  model.SearchResultItem:
+    properties:
+      cover_url:
+        type: string
       episode_id:
         type: string
-      topics:
+      highlights:
         items:
-          $ref: '#/definitions/model.TopicCard'
+          $ref: '#/definitions/model.SearchHighlight'
         type: array
+      podcast_name:
+        type: string
+      score:
+        type: number
+      title:
+        type: string
     type: object
   model.TranscriptLine:
     properties:
+      chapter_id:
+        type: string
+      emotion:
+        type: string
+      emotion_score:
+        type: number
+      end_time:
+        type: number
       has_fact_flag:
         type: boolean
       id:
         type: string
       start_time:
-        type: integer
+        type: number
       text:
         type: string
     type: object
@@ -162,70 +226,11 @@ definitions:
 host: localhost:8080
 info:
   contact: {}
-  description: Podcast analysis backend — episodes, topics, transcripts, fact-checks,
+  description: Podcast analysis backend — episodes, chapters, transcripts, fact-checks,
     chat.
   title: Audiolens API
   version: "1.0"
 paths:
-  /chat/conversations:
-    post:
-      consumes:
-      - application/json
-      description: Create a new chat conversation for an episode.
-      parameters:
-      - description: Episode ID
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/model.CreateConversationRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/model.CreateConversationResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/model.ApiError'
-      summary: Neue Chat-Session starten
-      tags:
-      - chat
-  /chat/conversations/{id}/messages:
-    post:
-      consumes:
-      - application/json
-      description: Send a message and receive a stubbed NDJSON streaming response.
-      parameters:
-      - description: Conversation ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: User message
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/model.SendMessageRequest'
-      produces:
-      - application/x-ndjson
-      responses:
-        "200":
-          description: NDJSON stream of ChatStreamChunk
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/model.ApiError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/model.ApiError'
-      summary: Nachricht senden — Antwort kommt als Stream
-      tags:
-      - chat
   /episodes:
     get:
       description: Cursor-based paginated episode list with optional free-text search.
@@ -279,6 +284,95 @@ paths:
       summary: Episode-Detail
       tags:
       - episodes
+  /episodes/{id}/audio:
+    get:
+      description: Proxy-Endpoint that streams the episode audio from object storage.
+      parameters:
+      - description: Episode ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: Audio stream
+        "206":
+          description: Partial audio stream (range request)
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ApiError'
+      summary: Audio-Datei streamen
+      tags:
+      - episodes
+  /episodes/{id}/chapters:
+    get:
+      description: Get chapters for an episode. Returns 202 if segmentation is not
+        ready yet.
+      parameters:
+      - description: Episode ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.ChaptersResponse'
+        "202":
+          description: Segmentation not ready
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ApiError'
+      summary: Kapitel eines Episodes
+      tags:
+      - chapters
+  /episodes/{id}/chat:
+    post:
+      consumes:
+      - application/json
+      description: Ask a question about a podcast episode. The answer is generated
+        based solely on the episode transcript.
+      parameters:
+      - description: Episode ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: User question
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.ChatRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.ChatResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ApiError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ApiError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/model.ApiError'
+      summary: Frage zum Podcast stellen
+      tags:
+      - chat
   /episodes/{id}/fact-checks:
     get:
       description: Get fact-check claims for an episode.
@@ -323,32 +417,6 @@ paths:
       summary: Playback-Position per SSE
       tags:
       - sync
-  /episodes/{id}/topics:
-    get:
-      description: Get topics for an episode. Returns 202 if analysis is not ready
-        yet.
-      parameters:
-      - description: Episode ID (UUID)
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/model.TopicsResponse'
-        "202":
-          description: Analysis not ready
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/model.ApiError'
-      summary: Themen für den Themen-Tab
-      tags:
-      - topics
   /episodes/{id}/transcript:
     get:
       description: Get transcript lines for an episode. Lines are annotated with has_fact_flag.
@@ -390,4 +458,47 @@ paths:
       summary: Health check
       tags:
       - health
+  /search:
+    get:
+      description: Search episodes and transcript chunks using natural-language queries
+        via vector similarity.
+      parameters:
+      - description: Search query
+        in: query
+        name: q
+        required: true
+        type: string
+      - default: 10
+        description: Max episode results
+        in: query
+        name: limit
+        type: integer
+      - default: 3
+        description: Max highlights per episode
+        in: query
+        name: highlights
+        type: integer
+      - default: 0.73
+        description: Minimum similarity score
+        in: query
+        name: min_score
+        type: number
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.SearchResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ApiError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/model.ApiError'
+      summary: Semantic search
+      tags:
+      - search
 swagger: "2.0"
