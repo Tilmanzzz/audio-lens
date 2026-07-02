@@ -130,7 +130,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "Page size (default 20, max 100)",
+                        "description": "Page size (default 100, max 100)",
                         "name": "limit",
                         "in": "query"
                     }
