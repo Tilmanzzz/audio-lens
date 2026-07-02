@@ -160,14 +160,14 @@ func formatDate(t sql.NullTime) string {
 // @Produce      json
 // @Param        q       query     string  false  "Free-text search on title and podcast name"
 // @Param        cursor  query     string  false  "Cursor from previous response"
-// @Param        limit   query     int     false  "Page size (default 20, max 100)"
+// @Param        limit   query     int     false  "Page size (default 100, max 100)"
 // @Success      200  {object}  model.EpisodeListResponse
 // @Failure      400  {object}  model.ApiError
 // @Router       /episodes [get]
 func (h *Handler) ListEpisodes(c *gin.Context) {
 	q := c.Query("q")
 	cursor := c.Query("cursor")
-	limit := repository.ParseLimit(c.Query("limit"), 20, 100)
+	limit := repository.ParseLimit(c.Query("limit"), 100, 100)
 
 	episodes, total, err := h.Episodes.ListPaginated(c.Request.Context(), q, cursor, limit)
 	if err != nil {
