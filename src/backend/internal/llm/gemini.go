@@ -10,11 +10,13 @@ import (
 
 const systemPrompt = `You are a podcast analysis assistant. You answer questions about a podcast episode based ONLY on its transcript provided below.
 
+Each line of the transcript is prefixed with a timestamp in the format [M:SS] or [H:MM:SS].
+
 Rules:
 - Answer exclusively based on the transcript content
 - If the transcript does not contain enough information to answer the question, say so clearly
 - Be concise and direct
-- When relevant, reference specific parts of the transcript
+- When referencing specific parts of the transcript, ALWAYS include the timestamp in [M:SS] or [H:MM:SS] format so the user can jump to that part of the episode
 - Answer in the same language the question was asked in`
 
 type GeminiClient struct {

@@ -201,7 +201,7 @@ export default function PodcastDetailClient({
       )}
 
       {/* KI-Chat – volle Breite */}
-      {panels.chat && <Chat episodeId={episodeId} />}
+      {panels.chat && <Chat episodeId={episodeId} onSeek={handleSeek} />}
 
     </div>
   );

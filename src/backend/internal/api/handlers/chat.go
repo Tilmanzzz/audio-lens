@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strings"
 
@@ -46,8 +48,7 @@ func (h *Handler) Chat(c *gin.Context) {
 
 	var sb strings.Builder
 	for _, line := range lines {
-		sb.WriteString(line.Text)
-		sb.WriteByte('\n')
+		sb.WriteString(fmt.Sprintf("[%s] %s\n", formatTimestamp(line.StartTime), line.Text))
 	}
 
 	answer, err := h.LLM.Chat(c.Request.Context(), sb.String(), req.History, req.Question)
@@ -58,4 +59,15 @@ func (h *Handler) Chat(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, model.ChatResponse{Answer: answer})
+}
+
+func formatTimestamp(seconds float64) string {
+	total := int(math.Round(seconds))
+	h := total / 3600
+	m := (total % 3600) / 60
+	s := total % 60
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+	}
+	return fmt.Sprintf("%d:%02d", m, s)
 }

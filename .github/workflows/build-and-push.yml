@@ -38,6 +38,8 @@ jobs:
           file: ./src/02_processing/sectioning/Dockerfile
           push: true
           tags: ${{ env.IMAGE_PREFIX }}-sectioning:latest
+          cache-from: type=gha,scope=sectioning
+          cache-to: type=gha,mode=max,scope=sectioning
 
       # 2. Transcription
       - name: Build and push Transcription
@@ -47,6 +49,8 @@ jobs:
           file: ./src/02_processing/transcription/Dockerfile
           push: true
           tags: ${{ env.IMAGE_PREFIX }}-transcription:latest
+          cache-from: type=gha,scope=transcription
+          cache-to: type=gha,mode=max,scope=transcription
 
       # 3. Ingestion
       - name: Build and push Ingestion
@@ -57,6 +61,8 @@ jobs:
           target: ingestion
           push: true
           tags: ${{ env.IMAGE_PREFIX }}-ingestion:latest
+          cache-from: type=gha,scope=ingestion
+          cache-to: type=gha,mode=max,scope=ingestion
 
       # 4. Insertion
       - name: Build and push Insertion
@@ -67,6 +73,8 @@ jobs:
           target: insertion
           push: true
           tags: ${{ env.IMAGE_PREFIX }}-insertion:latest
+          cache-from: type=gha,scope=insertion
+          cache-to: type=gha,mode=max,scope=insertion
 
       # 5. Processing (Silver Enriched)
       - name: Build and push Processing
@@ -76,6 +84,8 @@ jobs:
           file: ./src/02_processing/silver_enriched/Dockerfile
           push: true
           tags: ${{ env.IMAGE_PREFIX }}-processing:latest
+          cache-from: type=gha,scope=processing
+          cache-to: type=gha,mode=max,scope=processing
 
       # 6. Backend
       - name: Build and push Backend
@@ -84,6 +94,8 @@ jobs:
           context: ./src/backend
           push: true
           tags: ${{ env.IMAGE_PREFIX }}-backend:latest
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
 
       # 7. Frontend
       - name: Build and push Frontend
@@ -93,3 +105,5 @@ jobs:
           file: ./src/frontend/Dockerfile.dev
           push: true
           tags: ${{ env.IMAGE_PREFIX }}-frontend:latest
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend

@@ -224,3 +224,7 @@ pg_dump_*
 
 # Apple
 .DS_Store
+
+
+
+*:Zone.Identifier

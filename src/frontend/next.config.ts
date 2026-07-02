@@ -4,7 +4,9 @@ const nextConfig: NextConfig = {
   env: {
     BACKEND_URL: process.env.BACKEND_URL ?? "http://localhost:8080",
   },
+  allowedDevOrigins: ['141.62.115.192', 'localhost'],
   images: {
+    dangerouslyAllowLocalIP: true,
     remotePatterns: [
       {
         protocol: "http",

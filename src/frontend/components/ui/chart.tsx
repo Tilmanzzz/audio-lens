@@ -30,6 +30,7 @@ const ALL_EMOTIONS = ["angry", "happy", "neutral", "sad"];
 
 const PX_PER_SECOND = 4;
 const MIN_CANVAS_WIDTH = 600;
+const MAX_CANVAS_WIDTH = 8000; // Safe logical limit to prevent exceeding max canvas area
 const CANVAS_H = 180;
 const PAD_L = 12;
 const PAD_R = 12;
@@ -60,7 +61,12 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
 
   const segments      = data.segments;
   const totalDuration = segments.at(-1)?.end ?? 1;
-  const canvasWidth   = Math.max(MIN_CANVAS_WIDTH, PX_PER_SECOND * totalDuration);
+  
+  // Clamped to prevent browser InvalidStateError for long podcasts
+  const canvasWidth   = Math.min(
+    Math.max(MIN_CANVAS_WIDTH, PX_PER_SECOND * totalDuration), 
+    MAX_CANVAS_WIDTH
+  );
 
   const toX = useCallback(
     (t: number) => PAD_L + (t / totalDuration) * (canvasWidth - PAD_L - PAD_R),
@@ -77,7 +83,6 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
     segment: seg,
   }));
 
-  // Haupt-Chart zeichnen
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -91,12 +96,11 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
     const ctx = canvas.getContext("2d")!;
     ctx.scale(dpr, dpr);
 
-    const cs          = getComputedStyle(document.documentElement);
+    const cs            = getComputedStyle(document.documentElement);
     const textSecondary = cs.getPropertyValue("--color-text-secondary").trim()  || "rgba(128,128,128,0.6)";
     const borderColor   = cs.getPropertyValue("--color-border-tertiary").trim() || "rgba(128,128,128,0.15)";
     const textPrimary   = cs.getPropertyValue("--color-text-primary").trim()    || "#000";
 
-    // Hintergrundlinien
     ctx.strokeStyle = borderColor;
     ctx.lineWidth = 0.5;
     for (let i = 0; i <= 4; i++) {
@@ -107,7 +111,6 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
       ctx.stroke();
     }
 
-    // Verbindungslinie
     ctx.beginPath();
     ctx.strokeStyle = textPrimary;
     ctx.lineWidth = 2;
@@ -120,7 +123,6 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
     });
     ctx.stroke();
 
-    // Nur Startzeit links und Endzeit rechts
     ctx.fillStyle = textSecondary;
     ctx.font = "11px sans-serif";
     if (points.length > 0) {
@@ -130,7 +132,6 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
       ctx.fillText(formatTime(points[points.length - 1].segment.end), canvasWidth - PAD_R, CANVAS_H - 6);
     }
 
-    // Punkte
     points.forEach((pt) => {
       const x = toX(pt.time);
       const y = toY(pt.value);
@@ -149,7 +150,6 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
     });
   }, [points, canvasWidth, toX, toY]);
 
-  // Playhead zeichnen
   useEffect(() => {
     const canvas = playheadRef.current;
     if (!canvas) return;
@@ -181,7 +181,6 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
     ctx.fill();
   }, [currentTime, canvasWidth, toX]);
 
-  // Auto-Scroll: Playhead im Sichtbereich halten
   useEffect(() => {
     const scroll = scrollRef.current;
     if (!scroll) return;
@@ -196,7 +195,6 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
     }
   }, [currentTime, toX]);
 
-  // Klick → seek
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!onSeek || !scrollRef.current) return;
     const rect      = scrollRef.current.getBoundingClientRect();
@@ -216,7 +214,6 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
     );
   };
 
-  // Tooltip bei Hover
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const wrapper = wrapperRef.current;
     const scroll  = scrollRef.current;
@@ -249,7 +246,6 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
       <p className="text-lg font-medium mb-4">Emotionchart</p>
 
       <div className="flex gap-4 min-w-0">
-        {/* Legende – immer alle 4 Emotionen */}
         <div className="flex flex-col gap-2 justify-around shrink-0">
           {ALL_EMOTIONS.map((em) => (
             <div key={em} className="flex items-center gap-2">
@@ -264,7 +260,6 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
           ))}
         </div>
 
-        {/* Chart + Farbbalken in einem scrollbaren Container */}
         <div ref={wrapperRef} className="flex-1 min-w-0 relative">
           <div
             ref={scrollRef}
@@ -273,15 +268,12 @@ export default function EmotionChart({ data, currentTime = 0, onSeek }: EmotionC
             onMouseMove={handleMouseMove}
             onMouseLeave={() => setTooltip(null)}
           >
-            {/* Canvas-Bereich */}
             <div className="relative" style={{ width: canvasWidth, height: CANVAS_H }}>
               <canvas ref={canvasRef}   className="absolute top-0 left-0 pointer-events-none" />
               <canvas ref={playheadRef} className="absolute top-0 left-0 pointer-events-none" />
             </div>
-
           </div>
 
-          {/* Tooltip */}
           {tooltip && (
             <div
               className="absolute pointer-events-none rounded-lg px-3 py-2 text-xs bg-background-raised border border-border text-foreground z-10"

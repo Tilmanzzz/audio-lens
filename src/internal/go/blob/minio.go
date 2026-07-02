@@ -65,6 +65,7 @@ func (b *Bucket) UploadPodcastMetadata(ctx context.Context, podcastID, assetType
 }
 
 // UploadAsset streams episode-level media to an entity-first, deterministic path.
+// TODO rename
 func (b *Bucket) UploadAsset(ctx context.Context, podcastID, episodeGUID, assetType, filename, contentType string, body io.Reader, size int64, sourceURL string) (string, error) {
 	ext := extensionFromContentType(contentType)
 	objectKey := fmt.Sprintf("%s/%s/%s/%s%s", podcastID, episodeGUID, assetType, filename, ext)
@@ -86,6 +87,18 @@ func (b *Bucket) UploadAsset(ctx context.Context, podcastID, episodeGUID, assetT
 		return "", fmt.Errorf("episode asset upload failed: %w", err)
 	}
 
+	return objectKey, nil
+}
+
+// UploadSystemAsset uploads a fixed platform asset at a deterministic key.
+// TODO rename
+func (b *Bucket) UploadSystemAsset(ctx context.Context, objectKey, contentType string, data []byte) (string, error) {
+	_, err := b.client.PutObject(ctx, b.name, objectKey, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
+		ContentType: contentType,
+	})
+	if err != nil {
+		return "", fmt.Errorf("system asset upload failed: %w", err)
+	}
 	return objectKey, nil
 }
 

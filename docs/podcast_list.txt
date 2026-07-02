@@ -1,0 +1,28 @@
+insert new podcast:
+
+DB-Manager:
+NOTIFY podcast_insert_request, '{"url": "https://feeds.megaphone.fm/daily-stoic", "max_episodes": 5}'
+
+Docker:
+docker exec -it <postgres_container_name> psql -U postgres -d postgres -c "NOTIFY podcast_insert_request, '{\"url\": \"https://feeds.megaphone.fm/daily-stoic\", \"max_episodes\": 5}';"
+
+
+"https://podcasts.files.bbci.co.uk/p02nq0gn.rss",                // BBC Global News - ~30min
+"https://video-api.wsj.com/podcast/rss/wsj/minute-briefing",     // WSJ Minute Briefing - ~3min
+"https://feeds.npr.org/510289/podcast.xml",                      // Planet Money - ~30min
+"https://feed.podbean.com/northwell/feed.xml",                   // 20-minute health talk - ~20min
+"https://feeds.acast.com/public/shows/6152264dc28ad2001383af42", // Make Your Damn Bed - ~10min
+"https://feeds.npr.org/510318/podcast.xml",                      // Up First - ~15min
+"http://feeds.thememorypalace.us/thememorypalace",               // The Memory Palace - ~11min
+"https://podcasts.files.bbci.co.uk/p004t1hd.rss", 		 // Witness History - ~15min
+"https://feeds.megaphone.fm/BVDWV5370667266",			 // The Ben Shapiro Show - ~1h
+"https://feeds.libsyn.com/576235/rss",				 // The Rubin Report - ~1h
+"https://rss.dw.com/xml/podcast_Berlin_Briefing",		 // DW Berlin Briefing Inside German politics - ~1h
+"https://feeds.simplecast.com/BqbsxVfO",			 // 99% Invisible - ~30min
+"https://feeds.megaphone.fm/ADV3162807280",			 // Everything Everywhere Daily - ~15min
+"https://audioboom.com/channels/5162833.rss",			 // History Daily - ~15min
+"https://www.spreaker.com/show/6413557/episodes/feed",		 // 10 Minute Mystery - ~10min
+"https://feeds.megaphone.fm/GLSS3382990828",			 // Morning Cup Of Murder - ~10min
+"https://feeds.megaphone.fm/RSV1597324942",			 // Tucker Carlson Show
+
+

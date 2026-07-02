@@ -102,22 +102,45 @@ func (s *Store) GetPodcastsForIngestion(ctx context.Context, mode string) ([]Pod
 	if mode == "full" {
 		query = `SELECT id, guid, feed_url, title, source_system_updated_at, max_episodes FROM podcasts`
 	} else {
-		// Tier 1 Delta: Only grab podcasts with new episodes
+		// Tier 1 Delta: Grab podcasts with new remote updates OR where max_episodes allows for more content
 		query = `
-			SELECT id, guid, feed_url, title, source_system_updated_at, max_episodes 
-			FROM podcasts 
-			WHERE ingested_at IS NULL OR source_system_updated_at > ingested_at`
+			SELECT p.id, p.guid, p.feed_url, p.title, p.source_system_updated_at, p.max_episodes 
+			FROM podcasts p
+			LEFT JOIN (
+				SELECT podcast_id, COUNT(*) as current_count 
+				FROM episodes 
+				GROUP BY podcast_id
+			) e ON p.id = e.podcast_id
+			WHERE p.ingested_at IS NULL 
+			   OR p.source_system_updated_at > p.ingested_at
+			   OR (p.max_episodes IS NOT NULL AND COALESCE(e.current_count, 0) < p.max_episodes)`
 	}
 
 	err := pgxscan.Select(ctx, s.Pool, &pp, query)
 	return pp, err
 }
 
+// UpdateMaxEpisodesIfHigher updates the max_episodes count only if the provided integer is greater than the current DB value.
+// It returns true if the row was updated.
+func (s *Store) UpdateMaxEpisodesIfHigher(ctx context.Context, feedURL string, newMax int) (bool, error) {
+	query := `
+		UPDATE podcasts
+		SET max_episodes = $1
+		WHERE feed_url = $2 
+		  AND (max_episodes IS NULL OR max_episodes < $1)`
+
+	tag, err := s.Pool.Exec(ctx, query, newMax, feedURL)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // SyncPodcastMetadata is used by the Metadata module (Insertion) to overwrite show-level data.
-// It returns true if the record was actually updated (meaning the metadata changed, or a newer/initial timestamp was applied).
 func (s *Store) SyncPodcastMetadata(
 	ctx context.Context,
-	id, guid, title, description, hosts string,
+	id, guid, title string,
+	description, hosts *string,
 	sourceSystemUpdatedAt *time.Time,
 ) (bool, error) {
 	query := `
@@ -149,7 +172,6 @@ func (s *Store) SyncPodcastMetadata(
 	return tag.RowsAffected() > 0, nil
 }
 
-// MarkPodcastIngested now saves the xml_key to the podcast row
 func (s *Store) MarkPodcastIngested(ctx context.Context, id, batchID, xmlKey string) error {
 	query := `
 		UPDATE podcasts

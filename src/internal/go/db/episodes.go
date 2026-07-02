@@ -11,7 +11,7 @@ import (
 // pre-fetches all episodes for a podcast into a fast lookup map
 func (s *Store) GetEpisodeMap(ctx context.Context, podcastID string) (map[string]Episode, error) {
 	var episodes []Episode
-	query := `SELECT id, podcast_id, guid, title, audio_key, cover_key, published_at, enclosure_url, COALESCE(batch_id::text, '') as batch_id
+	query := `SELECT id, podcast_id, guid, title, audio_key, cover_key, published_at, enclosure_url, COALESCE(batch_id::text, '') as batch_id, source_system_updated_at
 	          FROM episodes WHERE podcast_id = $1`
 
 	err := pgxscan.Select(ctx, s.Pool, &episodes, query, podcastID)
