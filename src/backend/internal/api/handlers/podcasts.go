@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,26 @@ import (
 	"media-lens/backend/internal/storage"
 	"media-lens/backend/internal/vectorstore"
 )
+
+// summaryNotAvailable is returned instead of a raw summary when the stored
+// value looks like an unprocessed LLM message object (e.g. a Python
+// `content=...` repr that leaked into the DB instead of the actual summary
+// text).
+//
+// NOTE: hardcoded in English for now. Once the app supports multiple
+// languages, this should move to a proper i18n message catalog keyed by
+// locale instead of being a plain constant.
+const summaryNotAvailable = "Not available yet."
+
+// sanitizeSummary guards against malformed summaries that start with
+// "content=" (e.g. an accidentally stringified LLM response object) by
+// replacing them with a placeholder instead of exposing the raw value.
+func sanitizeSummary(summary string) string {
+	if strings.HasPrefix(strings.TrimSpace(summary), "content=") {
+		return summaryNotAvailable
+	}
+	return summary
+}
 
 type Handler struct {
 	Episodes    repository.EpisodeRepository
@@ -104,7 +125,7 @@ func episodeToCard(ep model.Episode, coverURLs map[string]*url.URL) model.Episod
 		Title:              ep.Title,
 		PodcastName:        ep.PodcastName,
 		PublishedAt:        formatDate(ep.PublishedAt),
-		Summary:            ep.Summary,
+		Summary:            sanitizeSummary(ep.Summary),
 		ProcessingComplete: ep.ProcessingComplete,
 	}
 	if ep.DurationSeconds != nil {
@@ -124,7 +145,7 @@ func (h *Handler) episodeToDetail(c *gin.Context, ep model.Episode) model.Episod
 		Title:              ep.Title,
 		PodcastName:        ep.PodcastName,
 		PublishedAt:        formatDate(ep.PublishedAt),
-		Summary:            ep.Summary,
+		Summary:            sanitizeSummary(ep.Summary),
 		ProcessingComplete: ep.ProcessingComplete,
 	}
 	if ep.DurationSeconds != nil {
