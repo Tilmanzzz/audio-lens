@@ -14,19 +14,15 @@ export default async function HomePage({
   const { items, total } = await fetchEpisodes({
     q: query || undefined,
     cursor: cursor || undefined,
-    limit: 12,
   });
 
 
   return (
     <div className="mx-auto max-w-7xl">
       <header className="mb-8">
-        <div className="mt-3">
-          <SearchBar placeholder="Suche..." />
-        </div>
-        <h1 className="mt-10 text-3xl font-bold text-foreground">Discover Podcasts</h1>
+        <h1>Library</h1>
         <p className="mt-2 text-sm text-foreground-subtle">
-          {"Our newest Episodes"}
+          {total} {query ? `Ergebnisse für „${query}"` : "Episodes in Database"}
         </p>
       </header>
 
