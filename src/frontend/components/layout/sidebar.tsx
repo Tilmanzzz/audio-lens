@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { House, Search, AudioLines } from "lucide-react";
+import { House,Landmark, AudioLines } from "lucide-react";
 
 export function Sidebar() {
   return (
@@ -17,6 +17,13 @@ export function Sidebar() {
           >
             <House size={22} aria-hidden="true" />
             <span>Home</span>
+          </Link>
+          <Link
+            href="/gesamt"
+            className="flex items-center gap-3 rounded-xl px-3 py-2 text-lg transition hover:bg-background-raised hover:text-accent"
+          >
+            <Landmark size={22} aria-hidden="true" />
+            <span>Library</span>
           </Link>
         </nav>
 
