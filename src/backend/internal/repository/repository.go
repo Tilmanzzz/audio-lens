@@ -55,7 +55,7 @@ func (r *postgresEpisodeRepo) GetByID(ctx context.Context, id string) (*model.Ep
 
 func (r *postgresEpisodeRepo) ListPaginated(ctx context.Context, q string, cursor string, limit int) ([]model.Episode, int, error) {
 	if limit <= 0 || limit > 100 {
-		limit = 20
+		limit = 100
 	}
 
 	var whereClauses []string
