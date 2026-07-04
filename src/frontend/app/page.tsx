@@ -11,7 +11,7 @@ export default async function HomePage({
   const { q, cursor } = await searchParams;
   const query = q ?? "";
 
-  const { items, total } = await fetchEpisodes({
+  const { items} = await fetchEpisodes({
     q: query || undefined,
     cursor: cursor || undefined,
     limit: 12,

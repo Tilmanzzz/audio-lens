@@ -1,6 +1,6 @@
 import { fetchEpisodes } from "@/lib/api";
 import { InfoCard } from "@/components/ui/card";
-import { SearchBar } from "@/components/layout/searchbar";
+
 
 
 export default async function HomePage({
