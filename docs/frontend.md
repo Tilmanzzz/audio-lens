@@ -4,6 +4,7 @@ Das Frontend von `media-lens` ist eine Next.js 15-Anwendung unter `src/frontend/
 
 Das Frontend zeigt Podcasts, Episoden-Details, Suche und einen interaktiven Player mit Transcript, Emotion-Chart, Fact-Check-Ansicht und KI-Chat.
 
+> Hinweis: Diese Dokumentation wurde mit der Unterstützung von KI (Claude Sonnet 4.6) geschrieben.
 **Stack:**
 - Next.js 15 (App Router)
 - TypeScript
