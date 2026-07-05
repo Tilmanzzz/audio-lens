@@ -35,7 +35,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./src/
-          file: ./src/02_processing/sectioning/Dockerfile
+          file: ./src/02_processing/silver/sectioning/Dockerfile
           push: true
           tags: ${{ env.IMAGE_PREFIX }}-sectioning:latest
           cache-from: type=gha,scope=sectioning
@@ -46,7 +46,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./src/
-          file: ./src/02_processing/transcription/Dockerfile
+          file: ./src/02_processing/silver/transcription/Dockerfile
           push: true
           tags: ${{ env.IMAGE_PREFIX }}-transcription:latest
           cache-from: type=gha,scope=transcription

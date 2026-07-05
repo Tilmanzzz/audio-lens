@@ -13,7 +13,7 @@ The schema is defined in `storage/db/init_v2.sql` and uses strict relational int
 
 ---
 
-## Core Schema & Entity Hierarchy
+## Core Schema
 
 The database follows a strict top-down hierarchy. Deleting a parent entity automatically cleans up all child records via `ON DELETE CASCADE`.
 
@@ -65,7 +65,7 @@ The `embeddings` table is designed to support scalable Semantic Search across th
 
 ---
 
-## Data Integrity & Constraints
+## Constraints
 
 The schema heavily utilizes PostgreSQL's native constraints to prevent bad data from entering the system:
 

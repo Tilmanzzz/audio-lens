@@ -17,7 +17,7 @@ This stage is entirely asynchronous and event-driven, leveraging `asyncio` and P
 
 ---
 
-## Folder Structure
+## Directory Structure
 
 ```text
 src/02_processing/

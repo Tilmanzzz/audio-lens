@@ -93,15 +93,15 @@ The deployment landscape maps platform requirements directly to dedicated networ
 
 **Deployment Payload Updates**: Triggered only when infrastructure or configuration files change (e.g., `docker-compose.prod.yml`, storage directories). This workflow aggregates the production compose file, database initialization scripts, and provisions necessary volume directories. It then force-pushes this payload as a single commit to the orphan `deploy` branch, ensuring the production server pulls only the necessary configuration state.
 
-## AudioLens Deployment Guide
+## Media-Lens Deployment Guide
 
 ### Initial Server Setup
 
 For the first deployment, create a dedicated directory on your server and pull this orphan branch directly:
 
 ```bash
-mkdir audiolens-deploy
-cd audiolens-deploy
+mkdir medialens-deploy
+cd medialens-deploy
 git init
 git remote add origin https://github.com/tilmanzzz/media-lens.git
 git fetch origin deploy
