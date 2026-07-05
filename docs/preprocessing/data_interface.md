@@ -1,4 +1,4 @@
-# Übersicht
+# Overview 
 
 The `src/internal/python/` directory contains the shared database and schema layer for the Python-based pre-processing modules (Silver). It handles asynchronous PostgreSQL connections, complex transactional state handoffs, and strict data validation.
 
@@ -11,7 +11,7 @@ The `src/internal/python/` directory contains the shared database and schema lay
 
 ---
 
-## Ordnerstruktur
+## Directory Structure 
 
 ```text
 src/internal/python/

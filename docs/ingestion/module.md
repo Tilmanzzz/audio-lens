@@ -15,7 +15,7 @@ The pipeline is entirely event-driven and consists of two asynchronous modules t
 
 ---
 
-## Folder Structure
+## Directory Structure
 
 ```text
 src/01_ingestion/
