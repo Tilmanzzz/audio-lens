@@ -7,7 +7,7 @@ ENV UV_PYTHON=python3.13
 
 # Copy workspace root, lockfile and member manifests
 COPY pyproject.toml uv.lock ./
-COPY 02_processing/transcription/pyproject.toml 02_processing/transcription/pyproject.toml
+COPY 02_processing/silver/pyproject.toml 02_processing/silver/pyproject.toml
 COPY 02_processing/silver_enriched/pyproject.toml 02_processing/silver_enriched/pyproject.toml
 
 # Sync only the processing member's dependencies
