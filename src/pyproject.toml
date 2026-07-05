@@ -1,5 +1,5 @@
 [tool.uv.workspace]
 members = [
-    "02_processing/transcription",
+    "02_processing/silver",
     "02_processing/silver_enriched",
 ]

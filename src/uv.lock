@@ -1381,7 +1381,7 @@ wheels = [
 [[package]]
 name = "preprocessing"
 version = "0.1.0"
-source = { virtual = "02_processing/transcription" }
+source = { virtual = "02_processing/silver" }
 dependencies = [
     { name = "aiohttp" },
     { name = "asyncpg" },

@@ -49,7 +49,7 @@ services:
     build:
       context: ./src/
       # Adjust this path if the worker is inside silver_enriched or its own module
-      dockerfile: ./02_processing/sectioning/Dockerfile 
+      dockerfile: ./02_processing/silver/sectioning/Dockerfile 
     depends_on:
       postgres:
         condition: service_healthy
@@ -79,7 +79,7 @@ services:
   transcription:
     build:
       context: ./src/
-      dockerfile: ./02_processing/transcription/Dockerfile
+      dockerfile: ./02_processing/silver/transcription/Dockerfile
     depends_on:
       minio:
         condition: service_healthy
