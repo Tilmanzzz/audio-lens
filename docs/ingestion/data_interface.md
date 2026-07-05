@@ -1,4 +1,4 @@
-# Übersicht
+# Overview
 
 The `src/internal/go/` directory contains the shared data access layer for the Go-based Ingestion modules. It abstracts away the complexities of PostgreSQL connection pooling, database row mapping, and MinIO object storage routing, providing a clean API for the worker services.
 
@@ -11,7 +11,7 @@ The `src/internal/go/` directory contains the shared data access layer for the G
 
 ---
 
-## Ordnerstruktur
+## Directory Structure
 
 ```text
 src/internal/go/
@@ -65,7 +65,7 @@ A highly optimized wrapper around a `pgxpool.Pool`, designed to handle the heavy
 
 ---
 
-## Known Implementation Details
+## Implementation Details
 
 **Idempotency:** The database layer heavily relies on `ON CONFLICT DO UPDATE` (Upserts). If the ingestion worker crashes halfway through a download, restarting it will safely overwrite the existing DB rows without creating duplicates.
 
