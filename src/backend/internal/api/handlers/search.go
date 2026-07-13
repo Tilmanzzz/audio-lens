@@ -17,7 +17,7 @@ import (
 // @Param        q           query  string  true   "Search query"
 // @Param        limit       query  int     false  "Max episode results"      default(10)
 // @Param        highlights  query  int     false  "Max highlights per episode" default(3)
-// @Param        min_score   query  number  false  "Minimum similarity score"  default(0.3)
+// @Param        min_score   query  number  false  "Minimum similarity score"  default(0.73)
 // @Success      200  {object}  model.SearchResponse
 // @Failure      400  {object}  model.ApiError
 // @Failure      503  {object}  model.ApiError

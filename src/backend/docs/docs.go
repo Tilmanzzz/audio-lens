@@ -15,96 +15,6 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/chat/conversations": {
-            "post": {
-                "description": "Create a new chat conversation for an episode.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "chat"
-                ],
-                "summary": "Neue Chat-Session starten",
-                "parameters": [
-                    {
-                        "description": "Episode ID",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/model.CreateConversationRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/model.CreateConversationResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/model.ApiError"
-                        }
-                    }
-                }
-            }
-        },
-        "/chat/conversations/{id}/messages": {
-            "post": {
-                "description": "Send a message and receive a stubbed NDJSON streaming response.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/x-ndjson"
-                ],
-                "tags": [
-                    "chat"
-                ],
-                "summary": "Nachricht senden — Antwort kommt als Stream",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Conversation ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "User message",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/model.SendMessageRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "NDJSON stream of ChatStreamChunk"
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/model.ApiError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/model.ApiError"
-                        }
-                    }
-                }
-            }
-        },
         "/episodes": {
             "get": {
                 "description": "Cursor-based paginated episode list with optional free-text search.",
@@ -186,6 +96,138 @@ const docTemplate = `{
                 }
             }
         },
+        "/episodes/{id}/audio": {
+            "get": {
+                "description": "Proxy-Endpoint that streams the episode audio from object storage.",
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "episodes"
+                ],
+                "summary": "Audio-Datei streamen",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Episode ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Audio stream"
+                    },
+                    "206": {
+                        "description": "Partial audio stream (range request)"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/model.ApiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/episodes/{id}/chapters": {
+            "get": {
+                "description": "Get chapters for an episode. Returns 202 if segmentation is not ready yet.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chapters"
+                ],
+                "summary": "Kapitel eines Episodes",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Episode ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.ChaptersResponse"
+                        }
+                    },
+                    "202": {
+                        "description": "Segmentation not ready"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/model.ApiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/episodes/{id}/chat": {
+            "post": {
+                "description": "Ask a question about a podcast episode. The answer is generated based solely on the episode transcript.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "Frage zum Podcast stellen",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Episode ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "User question",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/model.ChatRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.ChatResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/model.ApiError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/model.ApiError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/model.ApiError"
+                        }
+                    }
+                }
+            }
+        },
         "/episodes/{id}/fact-checks": {
             "get": {
                 "description": "Get fact-check claims for an episode.",
@@ -243,44 +285,6 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "SSE stream"
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/model.ApiError"
-                        }
-                    }
-                }
-            }
-        },
-        "/episodes/{id}/topics": {
-            "get": {
-                "description": "Get topics for an episode. Returns 202 if analysis is not ready yet.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "topics"
-                ],
-                "summary": "Themen für den Themen-Tab",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Episode ID (UUID)",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/model.TopicsResponse"
-                        }
-                    },
-                    "202": {
-                        "description": "Analysis not ready"
                     },
                     "404": {
                         "description": "Not Found",
@@ -351,6 +355,68 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/search": {
+            "get": {
+                "description": "Search episodes and transcript chunks using natural-language queries via vector similarity.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "search"
+                ],
+                "summary": "Semantic search",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Max episode results",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 3,
+                        "description": "Max highlights per episode",
+                        "name": "highlights",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "default": 0.73,
+                        "description": "Minimum similarity score",
+                        "name": "min_score",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.SearchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/model.ApiError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/model.ApiError"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -368,21 +434,84 @@ const docTemplate = `{
                 }
             }
         },
-        "model.CreateConversationRequest": {
+        "model.ChapterCard": {
             "type": "object",
-            "required": [
-                "episode_id"
-            ],
             "properties": {
+                "chapter_idx": {
+                    "type": "integer"
+                },
+                "end_time": {
+                    "type": "number"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "start_time": {
+                    "type": "number"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.ChaptersResponse": {
+            "type": "object",
+            "properties": {
+                "chapters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.ChapterCard"
+                    }
+                },
                 "episode_id": {
                     "type": "string"
                 }
             }
         },
-        "model.CreateConversationResponse": {
+        "model.ChatMessage": {
+            "type": "object",
+            "required": [
+                "content",
+                "role"
+            ],
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "assistant"
+                    ]
+                }
+            }
+        },
+        "model.ChatRequest": {
+            "type": "object",
+            "required": [
+                "question"
+            ],
+            "properties": {
+                "history": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.ChatMessage"
+                    }
+                },
+                "question": {
+                    "type": "string",
+                    "maxLength": 10000
+                }
+            }
+        },
+        "model.ChatResponse": {
             "type": "object",
             "properties": {
-                "conversation_id": {
+                "answer": {
                     "type": "string"
                 }
             }
@@ -402,7 +531,13 @@ const docTemplate = `{
                 "podcast_name": {
                     "type": "string"
                 },
+                "processing_complete": {
+                    "type": "boolean"
+                },
                 "published_at": {
+                    "type": "string"
+                },
+                "summary": {
                     "type": "string"
                 },
                 "title": {
@@ -413,6 +548,9 @@ const docTemplate = `{
         "model.EpisodeDetail": {
             "type": "object",
             "properties": {
+                "audio_url": {
+                    "type": "string"
+                },
                 "cover_url": {
                     "type": "string"
                 },
@@ -425,7 +563,13 @@ const docTemplate = `{
                 "podcast_name": {
                     "type": "string"
                 },
+                "processing_complete": {
+                    "type": "boolean"
+                },
                 "published_at": {
+                    "type": "string"
+                },
+                "summary": {
                     "type": "string"
                 },
                 "title": {
@@ -461,8 +605,14 @@ const docTemplate = `{
         "model.FactCheckClaim": {
             "type": "object",
             "properties": {
+                "chapter_id": {
+                    "type": "string"
+                },
                 "claim": {
                     "type": "string"
+                },
+                "claim_idx": {
+                    "type": "integer"
                 },
                 "explanation": {
                     "type": "string"
@@ -475,9 +625,6 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
-                },
-                "start_time": {
-                    "type": "integer"
                 },
                 "verdict": {
                     "type": "string"
@@ -504,6 +651,9 @@ const docTemplate = `{
                 "database": {
                     "type": "string"
                 },
+                "embedding": {
+                    "type": "string"
+                },
                 "minio": {
                     "type": "string"
                 },
@@ -512,66 +662,78 @@ const docTemplate = `{
                 }
             }
         },
-        "model.SendMessageContext": {
+        "model.SearchHighlight": {
             "type": "object",
             "properties": {
-                "current_time": {
-                    "type": "integer"
-                }
-            }
-        },
-        "model.SendMessageRequest": {
-            "type": "object",
-            "required": [
-                "text"
-            ],
-            "properties": {
-                "context": {
-                    "$ref": "#/definitions/model.SendMessageContext"
-                },
-                "text": {
-                    "type": "string",
-                    "maxLength": 10000
-                }
-            }
-        },
-        "model.TopicCard": {
-            "type": "object",
-            "properties": {
-                "emotion": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
+                "score": {
+                    "type": "number"
                 },
                 "start_time": {
-                    "type": "integer"
+                    "type": "number"
                 },
-                "summary": {
-                    "type": "string"
-                },
-                "topic": {
+                "text": {
                     "type": "string"
                 }
             }
         },
-        "model.TopicsResponse": {
+        "model.SearchResponse": {
             "type": "object",
             "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.SearchResultItem"
+                    }
+                },
+                "query": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "model.SearchResultItem": {
+            "type": "object",
+            "properties": {
+                "cover_url": {
+                    "type": "string"
+                },
                 "episode_id": {
                     "type": "string"
                 },
-                "topics": {
+                "highlights": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/model.TopicCard"
+                        "$ref": "#/definitions/model.SearchHighlight"
                     }
+                },
+                "podcast_name": {
+                    "type": "string"
+                },
+                "score": {
+                    "type": "number"
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },
         "model.TranscriptLine": {
             "type": "object",
             "properties": {
+                "chapter_id": {
+                    "type": "string"
+                },
+                "emotion": {
+                    "type": "string"
+                },
+                "emotion_score": {
+                    "type": "number"
+                },
+                "end_time": {
+                    "type": "number"
+                },
                 "has_fact_flag": {
                     "type": "boolean"
                 },
@@ -579,7 +741,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "start_time": {
-                    "type": "integer"
+                    "type": "number"
                 },
                 "text": {
                     "type": "string"
@@ -610,7 +772,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/api/v1",
 	Schemes:          []string{},
 	Title:            "Audiolens API",
-	Description:      "Podcast analysis backend — episodes, topics, transcripts, fact-checks, chat.",
+	Description:      "Podcast analysis backend — episodes, chapters, transcripts, fact-checks, chat.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",
