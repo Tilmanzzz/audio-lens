@@ -8,93 +8,73 @@ import (
 	"github.com/georgysavva/scany/v2/pgxscan"
 )
 
-// pre-fetches all episodes for a podcast into a fast lookup map
+// GetEpisodeMap pre-fetches all episodes for a podcast into a guid-keyed lookup map.
 func (s *Store) GetEpisodeMap(ctx context.Context, podcastID string) (map[string]Episode, error) {
 	var episodes []Episode
 	query := `SELECT id, podcast_id, guid, title, audio_key, cover_key, published_at, enclosure_url, COALESCE(batch_id::text, '') as batch_id, source_system_updated_at
 	          FROM episodes WHERE podcast_id = $1`
 
-	err := pgxscan.Select(ctx, s.Pool, &episodes, query, podcastID)
-	if err != nil {
+	if err := pgxscan.Select(ctx, s.Pool, &episodes, query, podcastID); err != nil {
 		return nil, err
 	}
 
-	epMap := make(map[string]Episode)
+	epMap := make(map[string]Episode, len(episodes))
 	for _, ep := range episodes {
 		epMap[ep.GUID] = ep
 	}
 	return epMap, nil
 }
 
-// fetches a single episode by its primary key (UUID).
+// GetEpisodeByID fetches a single episode by its primary key.
 func (s *Store) GetEpisodeByID(ctx context.Context, id string) (Episode, error) {
 	var ep Episode
-	query := `SELECT id, podcast_id, guid, title, audio_key, cover_key, status, published_at, enclosure_url 
+	query := `SELECT id, podcast_id, guid, title, audio_key, cover_key, status, published_at, enclosure_url
 	          FROM episodes WHERE id = $1`
 
-	// fetches single row
-	err := pgxscan.Get(ctx, s.Pool, &ep, query, id)
-	if err != nil {
+	if err := pgxscan.Get(ctx, s.Pool, &ep, query, id); err != nil {
 		return Episode{}, err
 	}
 	return ep, nil
 }
 
+// MarkPendingSectioning transitions an episode to the pending_sectioning status.
 func (s *Store) MarkPendingSectioning(ctx context.Context, id string) error {
-	query := `
-		UPDATE episodes
-		SET status = 'pending_sectioning'
-		WHERE id = $1
-	`
-	result, err := s.Pool.Exec(ctx, query, id)
-	if err != nil {
-		return fmt.Errorf("failed to update episode status: %w", err)
-	}
-	// check if the episode existed
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("no episode found with id: %s", id)
-	}
-	return nil
+	return s.setEpisodeStatus(ctx, id, "pending_sectioning")
 }
 
+// MarkPendingTranscription transitions an episode to the pending_transcription status.
 func (s *Store) MarkPendingTranscription(ctx context.Context, id string) error {
-	query := `
-		UPDATE episodes
-		SET status = 'pending_transcription'
-		WHERE id = $1
-	`
-	result, err := s.Pool.Exec(ctx, query, id)
+	return s.setEpisodeStatus(ctx, id, "pending_transcription")
+}
+
+// setEpisodeStatus updates an episode's status and errors if no row matched.
+func (s *Store) setEpisodeStatus(ctx context.Context, id, status string) error {
+	result, err := s.Pool.Exec(ctx, `UPDATE episodes SET status = $1 WHERE id = $2`, status, id)
 	if err != nil {
 		return fmt.Errorf("failed to update episode status: %w", err)
 	}
-	// check if the episode existed
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("no episode found with id: %s", id)
 	}
 	return nil
 }
 
-// sets the transcriptKey
-func (s *Store) SetTranscriptKey(ctx context.Context, id string, transcriptKey string) error {
-	query := `
-		UPDATE episodes 
-		SET transcript_key = $1
-		WHERE id = $2`
-
+// SetTranscriptKey records the transcript object key for an episode and errors
+// if no row matched.
+func (s *Store) SetTranscriptKey(ctx context.Context, id, transcriptKey string) error {
+	query := `UPDATE episodes SET transcript_key = $1 WHERE id = $2`
 	result, err := s.Pool.Exec(ctx, query, transcriptKey, id)
 	if err != nil {
-		return fmt.Errorf("failed to update episode status: %w", err)
+		return fmt.Errorf("failed to update transcript key: %w", err)
 	}
-
-	// check if the episode existed
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("no episode found with id: %s", id)
 	}
-
 	return nil
 }
 
-// executes a single batch operation to insert/update multiple episodes.
+// BulkUpsertEpisodes inserts or updates episodes in a single batch and returns
+// the affected ids. Conflicts are resolved on the guid column.
 func (s *Store) BulkUpsertEpisodes(ctx context.Context, eps []Episode) ([]string, error) {
 	if len(eps) == 0 {
 		return nil, nil
@@ -124,32 +104,25 @@ func (s *Store) BulkUpsertEpisodes(ctx context.Context, eps []Episode) ([]string
 		sourceSystemUpdatedAts[i] = ep.SourceSystemUpdatedAt
 	}
 
+	// unnest the parallel arrays into rows, then upsert on the guid conflict
 	query := `
 		INSERT INTO episodes (
-			podcast_id, 
-			guid, 
-			title, 
-			audio_key, 
-			cover_key, 
-			published_at, 
-			duration_seconds, 
-			enclosure_url, 
-			batch_id, 
-			source_system_updated_at
-		) 
+			podcast_id, guid, title, audio_key, cover_key,
+			published_at, duration_seconds, enclosure_url, batch_id, source_system_updated_at
+		)
 		SELECT * FROM unnest(
-			$1::text[]::uuid[], 
-			$2::text[], 
-			$3::text[], 
-			$4::text[], 
-			$5::text[], 
-			$6::timestamptz[], 
-			$7::int[], 
-			$8::text[], 
-			$9::text[]::uuid[], 
+			$1::text[]::uuid[],
+			$2::text[],
+			$3::text[],
+			$4::text[],
+			$5::text[],
+			$6::timestamptz[],
+			$7::int[],
+			$8::text[],
+			$9::text[]::uuid[],
 			$10::timestamptz[]
 		)
-		ON CONFLICT (guid) DO UPDATE SET 
+		ON CONFLICT (guid) DO UPDATE SET
 			title = EXCLUDED.title,
 			audio_key = EXCLUDED.audio_key,
 			cover_key = EXCLUDED.cover_key,
@@ -160,14 +133,14 @@ func (s *Store) BulkUpsertEpisodes(ctx context.Context, eps []Episode) ([]string
 			source_system_updated_at = EXCLUDED.source_system_updated_at
 		RETURNING id;
 	`
-	var ids []string
 
+	var ids []string
 	err := pgxscan.Select(ctx, s.Pool, &ids, query,
-		podcastIDs, guids, titles, audioKeys, coverKeys, publishedAts, durations, enclosureURLs, batchIDs, sourceSystemUpdatedAts,
+		podcastIDs, guids, titles, audioKeys, coverKeys,
+		publishedAts, durations, enclosureURLs, batchIDs, sourceSystemUpdatedAts,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("bulk upsert failed: %w", err)
 	}
-
 	return ids, nil
 }

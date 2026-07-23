@@ -18,10 +18,10 @@ class Store:
             self.pool = await asyncpg.create_pool(
                 dsn=self.conn_str, min_size=2, max_size=10
             )
-            logger.info("Successfully established asyncpg PostgreSQL connection pool.")
+            logger.info("established asyncpg PostgreSQL connection pool")
         except Exception as e:
-            logger.error(f"Failed to connect to PostgreSQL via asyncpg: {e}")
-            raise e
+            logger.error(f"failed to connect to PostgreSQL via asyncpg: {e}")
+            raise
 
     async def close(self) -> None:
         if self.pool:
@@ -29,11 +29,11 @@ class Store:
 
     async def get_episode_by_id(self, episode_id: str) -> Episode:
         query = """
-        SELECT 
-            id, podcast_id, guid, title, published_at, duration_seconds, 
+        SELECT
+            id, podcast_id, guid, title, published_at, duration_seconds,
             audio_key, transcript_key, cover_key, enclosure_url, summary, batch_id,
-            ingested_at, source_system_updated_at, ingestion_updated_at 
-        FROM episodes 
+            ingested_at, source_system_updated_at, ingestion_updated_at
+        FROM episodes
         WHERE id = $1
         """
         row = await self.pool.fetchrow(query, episode_id)
@@ -43,7 +43,7 @@ class Store:
         return Episode(**row)
 
     async def get_episodes_for_full_transcription(self) -> List[str]:
-        """Fetches all episode IDs eligible for a full transcription run."""
+        """fetches all episode IDs eligible for a full transcription run"""
         query = (
             "SELECT id FROM episodes WHERE audio_key IS NOT NULL AND audio_key != ''"
         )
@@ -51,7 +51,7 @@ class Store:
         return [str(row["id"]) for row in rows]
 
     async def get_episodes_for_full_sectioning(self) -> List[str]:
-        """Fetches all episode IDs eligible for a full sectioning/segmenting run."""
+        """fetches all episode IDs eligible for a full sectioning run"""
         query = "SELECT id FROM episodes WHERE transcript_key IS NOT NULL AND transcript_key != ''"
         rows = await self.pool.fetch(query)
         return [str(row["id"]) for row in rows]
@@ -79,10 +79,7 @@ class Store:
         load_mode: str = "delta",
         notify_channel: Optional[str] = None,
     ) -> None:
-        """
-        Finalizes a pipeline batch, records its status, and propagates notifications
-        with context metadata to downstream services.
-        """
+        """finalizes a batch and, on success, notifies downstream services"""
         query = """
             UPDATE pipeline_batches
             SET status = $1::batch_status, fin_ts = NOW()
@@ -98,7 +95,7 @@ class Store:
             payload = json.dumps({"batch_id": batch_id, "load_mode": load_mode})
             await self.pool.execute("SELECT pg_notify($1, $2)", notify_channel, payload)
             logger.info(
-                f"Broadcasted '{notify_channel}' event for batch: {batch_id} (mode: {load_mode})"
+                f"broadcast '{notify_channel}' event for batch {batch_id} (mode: {load_mode})"
             )
 
     async def claim_batch_episodes(
@@ -107,8 +104,8 @@ class Store:
         new_batch_id: str,
     ) -> List[str]:
         """
-        Atomically re-points all episodes from source_batch to new_batch and
-        marks source_batch as 'consumed'.
+        atomically re-points episodes from source_batch to new_batch and
+        marks source_batch as 'consumed'
         """
         async with self.pool.acquire() as conn:
             async with conn.transaction():
@@ -141,6 +138,7 @@ class Store:
             raise Exception(f"No episode found with id: {episode_id}")
 
     async def set_preprocessing_updated_at(self, episode_id: str) -> None:
+        # bump the episode timestamp and mirror it onto the parent podcast
         query = """
             WITH updated_episode AS (
                 UPDATE episodes

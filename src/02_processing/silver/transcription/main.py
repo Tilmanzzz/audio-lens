@@ -28,11 +28,17 @@ internal_task_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
 
 
 def handle_exit_signals():
+    """Flip the shutdown flag so the main loop and listener wind down."""
     logger.info("received termination signal, shutting down...")
     shutdown_event.set()
 
 
 def init_minio_clients() -> Tuple[Minio, Minio]:
+    """Build the MinIO client and ensure the bronze/silver buckets exist.
+
+    Returns two handles for the bronze (source) and silver (processed) roles.
+    Both currently point at the same server.
+    """
     minio_endpoint = (
         os.getenv("MINIO_ENDPOINT", "localhost:9000")
         .replace("http://", "")
@@ -41,16 +47,15 @@ def init_minio_clients() -> Tuple[Minio, Minio]:
     user = os.getenv("MINIO_USER", "minioadmin")
     password = os.getenv("MINIO_PASS", "minioadmin")
 
-    bronze = Minio(minio_endpoint, access_key=user, secret_key=password, secure=False)
-    silver = Minio(minio_endpoint, access_key=user, secret_key=password, secure=False)
+    client = Minio(minio_endpoint, access_key=user, secret_key=password, secure=False)
 
     for bucket_name in ["bronze", "silver"]:
         try:
-            if not bronze.bucket_exists(bucket_name):
+            if not client.bucket_exists(bucket_name):
                 logger.info(f"creating missing bucket: {bucket_name}")
-                bronze.make_bucket(bucket_name)
+                client.make_bucket(bucket_name)
         except S3Error as e:
-            # If the Go worker created the bucket at the same time Minio will throw an S3Error
+            # tolerate the go worker racing us to create the same bucket
             if e.code in ["BucketAlreadyExists", "BucketAlreadyOwnedByYou"]:
                 logger.info(
                     f"bucket {bucket_name} was already created by another worker."
@@ -58,10 +63,11 @@ def init_minio_clients() -> Tuple[Minio, Minio]:
             else:
                 raise e
 
-    return bronze, silver
+    return client, client
 
 
 async def postgres_listener_task(pg_url: str):
+    """Listen for 'transcription_ready' notifications and enqueue matching tasks."""
     while not shutdown_event.is_set():
         conn = None
         try:
@@ -71,7 +77,6 @@ async def postgres_listener_task(pg_url: str):
                 try:
                     event_data = json.loads(payload)
                     mode = event_data.get("load_mode", "delta")
-
                     if mode == "full":
                         internal_task_queue.put_nowait({"mode": "full"})
                     elif batch_id := event_data.get("batch_id"):
@@ -86,8 +91,7 @@ async def postgres_listener_task(pg_url: str):
 
             while not shutdown_event.is_set():
                 await asyncio.sleep(30)
-                await conn.execute("SELECT 1")
-
+                await conn.execute("SELECT 1")  # keepalive
         except Exception as e:
             if not shutdown_event.is_set():
                 logger.warning(
@@ -103,10 +107,11 @@ async def postgres_listener_task(pg_url: str):
 
 
 async def queue_backlog_batches(store: Store):
+    """Re-queue any ingestion batches that finished while this worker was down."""
     try:
         missed_batches = await store.pool.fetch(
             """
-            SELECT id FROM pipeline_batches 
+            SELECT id FROM pipeline_batches
             WHERE stage = 'ingestion' AND status = 'success'
             ORDER BY start_ts ASC;
             """
@@ -123,6 +128,7 @@ async def queue_backlog_batches(store: Store):
 
 
 def download_audio(minio_client: Minio, audio_key: str, target_file) -> None:
+    """Stream source audio from the bronze bucket into a local temp file."""
     logger.info(f"downloading {audio_key}")
     response = minio_client.get_object("bronze", audio_key)
     try:
@@ -137,6 +143,7 @@ def download_audio(minio_client: Minio, audio_key: str, target_file) -> None:
 def upload_transcript(
     minio_client: Minio, transcript_key: str, raw_output: dict
 ) -> None:
+    """Write the finished transcript JSON into the silver bucket."""
     raw_json_bytes = json.dumps(raw_output).encode("utf-8")
     data_stream = io.BytesIO(raw_json_bytes)
 
@@ -153,6 +160,7 @@ def upload_transcript(
 async def process_episode(
     episode_id: str, store: Store, bronze: Minio, silver: Minio
 ) -> None:
+    """Download an episode's audio, run it through the Whisper API, and store the result."""
     ep = await store.get_episode_by_id(episode_id)
     if not ep:
         raise ValueError(f"episode not found: {episode_id}")
@@ -186,9 +194,9 @@ async def process_episode(
                     raise RuntimeError(
                         f"api request failed with status {resp.status}: {error_text}"
                     )
-
                 api_response = await resp.json()
 
+        # normalize the whisper api response into our storage schema
         raw_output = {
             "metadata": {
                 "language": api_response.get("language", "en"),
@@ -219,6 +227,7 @@ async def process_episode(
 
             raw_output["segments"].append(mapped_segment)
 
+    # store the transcript next to the source audio
     base_dir = os.path.dirname(ep.audio_key)
     transcript_key = f"{base_dir}/transcript.json"
 
@@ -235,6 +244,7 @@ async def handle_pipeline_task(
     bronze: Minio,
     silver: Minio,
 ):
+    """Resolve a batch's episode set (full scan or delta claim) and transcribe each one."""
     mode = task.get("mode", "delta")
     transcription_batch_id = await store.create_pipeline_batch("transcription", mode)
 
@@ -252,6 +262,7 @@ async def handle_pipeline_task(
             ingestion_batch_id, transcription_batch_id
         )
 
+    # nothing to do, drop the empty batch so it doesn't linger
     if not episode_ids:
         logger.info(f"workload empty. discarding batch {transcription_batch_id}.")
         await store.pool.execute(
@@ -263,6 +274,7 @@ async def handle_pipeline_task(
         f"processing {len(episode_ids)} episodes for batch {transcription_batch_id} (mode: {mode})"
     )
 
+    # one failing episode shouldn't sink the whole batch
     for episode_id in episode_ids:
         try:
             await process_episode(episode_id, store, bronze, silver)
@@ -278,6 +290,7 @@ async def handle_pipeline_task(
 
 
 async def main():
+    """Wire up signals, drain the task queue, and process batches one at a time."""
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, handle_exit_signals)
@@ -295,14 +308,13 @@ async def main():
 
     while not shutdown_event.is_set():
         try:
-            try:
-                task = await asyncio.wait_for(internal_task_queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                continue
+            task = await asyncio.wait_for(internal_task_queue.get(), timeout=1.0)
+        except asyncio.TimeoutError:
+            continue
 
+        try:
             await handle_pipeline_task(task, store, minio_bronze, minio_silver)
             internal_task_queue.task_done()
-
         except asyncio.CancelledError:
             break
         except Exception as e:

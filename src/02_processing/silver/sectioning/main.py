@@ -32,6 +32,8 @@ gemini_client = genai.Client()
 
 
 class ChapterMetadata(BaseModel):
+    """Schema the LLM must fill in for each detected chapter."""
+
     start_sentence_id: int = Field(
         description="The exact ID of the first sentence in this chapter."
     )
@@ -44,15 +46,19 @@ class ChapterMetadata(BaseModel):
 
 
 class ChapterList(BaseModel):
+    """Wrapper the LLM returns, holding one entry per detected chapter."""
+
     chapters: list[ChapterMetadata]
 
 
 def handle_exit_signals() -> None:
+    """Flip the shutdown flag so the main loop and listener wind down."""
     logger.info("Received termination signal. Shutting down...")
     shutdown_event.set()
 
 
 def init_minio_client() -> Minio:
+    """Build a MinIO client for the silver (processed) bucket."""
     endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
     return Minio(
         endpoint,
@@ -63,6 +69,7 @@ def init_minio_client() -> Minio:
 
 
 def download_transcript(minio: Minio, transcript_key: str) -> Dict[str, Any]:
+    """Stream a transcript JSON out of MinIO and parse it into a dict."""
     logger.info(f"Downloading transcript: {transcript_key}")
     response = minio.get_object("silver", transcript_key)
     try:
@@ -76,9 +83,11 @@ def download_transcript(minio: Minio, transcript_key: str) -> Dict[str, Any]:
 def create_sentence_lines(
     whisper_segments: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
+    """Turn Whisper's timed segments into sentence-level lines with timestamps."""
     if not whisper_segments:
         return []
 
+    # build the full transcript text alongside a per-character timestamp map
     full_text = ""
     char_to_time = []
 
@@ -94,12 +103,13 @@ def create_sentence_lines(
         chars_in_seg = end_idx - start_idx
         duration = end_time - start_time
 
+        # interpolate a timestamp for each character in the segment
         for i in range(chars_in_seg):
-            time_at_char = start_time + (i / chars_in_seg) * duration
-            char_to_time.append(time_at_char)
+            char_to_time.append(start_time + (i / chars_in_seg) * duration)
 
     sentences = nltk.sent_tokenize(full_text)
 
+    # map each tokenized sentence back to its start/end time via the char map
     sentence_lines = []
     search_start_idx = 0
 
@@ -110,14 +120,11 @@ def create_sentence_lines(
 
         match_end_idx = match_idx + len(sentence)
 
-        sent_start_time = char_to_time[match_idx]
-        sent_end_time = char_to_time[match_end_idx - 1]
-
         sentence_lines.append(
             {
                 "id": idx,
-                "start": round(sent_start_time, 3),
-                "end": round(sent_end_time, 3),
+                "start": round(char_to_time[match_idx], 3),
+                "end": round(char_to_time[match_end_idx - 1], 3),
                 "text": sentence,
             }
         )
@@ -130,6 +137,7 @@ def create_sentence_lines(
 async def extract_chapters_gemini(
     sentence_lines: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    """Ask Gemini to group the numbered sentences into topic-based chapters."""
     if not sentence_lines:
         return {"chapters": []}
 
@@ -169,6 +177,7 @@ async def extract_chapters_gemini(
 async def process_episode(
     episode_id: str, batch_id: str, store: Store, minio: Minio
 ) -> None:
+    """Run the full per-episode flow: fetch transcript, chapter it, persist chapters + lines."""
     row = await store.pool.fetchrow(
         "SELECT transcript_key, podcast_id FROM episodes WHERE id = $1", episode_id
     )
@@ -197,9 +206,11 @@ async def process_episode(
     total_lines = 0
     max_idx = len(sentence_lines) - 1
 
+    # write chapters and their lines in one transaction so a failure rolls back cleanly
     async with store.pool.acquire() as conn:
         async with conn.transaction():
             for section_idx, chapter_data in enumerate(chapters_metadata):
+                # clamp llm-supplied ids to the valid sentence range
                 start_id = max(0, min(chapter_data["start_sentence_id"], max_idx))
                 end_id = max(0, min(chapter_data["end_sentence_id"], max_idx))
 
@@ -272,6 +283,7 @@ async def process_episode(
 async def handle_pipeline_task(
     task: Dict[str, Any], store: Store, minio: Minio
 ) -> None:
+    """Resolve a batch's episode set (full scan or delta claim) and process each one."""
     mode = task.get("mode", "delta")
     segmenting_batch_id = await store.create_pipeline_batch("segmenting", mode)
 
@@ -289,6 +301,7 @@ async def handle_pipeline_task(
             transcription_batch_id, segmenting_batch_id
         )
 
+    # nothing to do, drop the empty batch so it doesn't linger
     if not episode_ids:
         logger.info(f"workload empty. discarding batch {segmenting_batch_id}.")
         await store.pool.execute(
@@ -312,9 +325,11 @@ async def handle_pipeline_task(
 
 
 async def postgres_listener_task(pg_url: str) -> None:
+    """Listen for 'segmenting_ready' notifications and enqueue matching tasks."""
     while not shutdown_event.is_set():
-        conn = await asyncpg.connect(pg_url)
+        conn = None
         try:
+            conn = await asyncpg.connect(pg_url)
 
             def on_notification(connection, pid, channel, payload):
                 event = json.loads(payload)
@@ -329,15 +344,17 @@ async def postgres_listener_task(pg_url: str) -> None:
             await conn.add_listener("segmenting_ready", on_notification)
             while not shutdown_event.is_set():
                 await asyncio.sleep(30)
-                await conn.execute("SELECT 1")
+                await conn.execute("SELECT 1")  # keepalive
         except Exception as e:
             logger.error(f"Postgres listener error: {e}")
             await asyncio.sleep(5)
         finally:
-            await conn.close()
+            if conn:
+                await conn.close()
 
 
 async def queue_backlog_batches(store: Store) -> None:
+    """Re-queue any transcription batches that finished while this worker was down."""
     rows = await store.pool.fetch(
         "SELECT id FROM pipeline_batches WHERE stage = 'transcription' AND status = 'success' ORDER BY start_ts ASC"
     )
@@ -346,6 +363,7 @@ async def queue_backlog_batches(store: Store) -> None:
 
 
 async def main() -> None:
+    """Wire up signals, drain the task queue, and run tasks under a concurrency cap."""
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, handle_exit_signals)
@@ -364,6 +382,7 @@ async def main() -> None:
     sem = asyncio.Semaphore(5)
 
     async def worker(task: Dict[str, Any]):
+        """Run a single task, guarded by the semaphore so we cap parallel batches."""
         async with sem:
             try:
                 await handle_pipeline_task(task, store, minio)

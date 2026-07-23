@@ -12,11 +12,14 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
+// Bucket wraps a MinIO client scoped to a single bucket.
 type Bucket struct {
 	client *minio.Client
 	name   string
 }
 
+// NewBucket creates a MinIO client for the given bucket, creating the bucket
+// if it does not already exist.
 func NewBucket(endpoint, user, pass, name string) (*Bucket, error) {
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(user, pass, ""),
@@ -40,7 +43,8 @@ func NewBucket(endpoint, user, pass, name string) (*Bucket, error) {
 	return &Bucket{client: client, name: name}, nil
 }
 
-// UploadPodcastMetadata uploads show-level assets directly to the podcast root path.
+// UploadPodcastMetadata uploads show-level assets to the podcast root path and
+// returns the resulting object key.
 func (b *Bucket) UploadPodcastMetadata(ctx context.Context, podcastID, assetType, filename, contentType string, body io.Reader, size int64, sourceURL string) (string, error) {
 	ext := extensionFromContentType(contentType)
 	objectKey := fmt.Sprintf("%s/%s/%s%s", podcastID, assetType, filename, ext)
@@ -51,21 +55,20 @@ func (b *Bucket) UploadPodcastMetadata(ctx context.Context, podcastID, assetType
 			"podcast-id": podcastID,
 		},
 	}
-
 	if sourceURL != "" {
 		opts.UserMetadata["source-url"] = sourceURL
 	}
 
-	_, err := b.client.PutObject(ctx, b.name, objectKey, body, size, opts)
-	if err != nil {
+	if _, err := b.client.PutObject(ctx, b.name, objectKey, body, size, opts); err != nil {
 		return "", fmt.Errorf("metadata upload failed: %w", err)
 	}
-
 	return objectKey, nil
 }
 
-// UploadAsset streams episode-level media to an entity-first, deterministic path.
-// TODO rename
+// UploadAsset streams episode-level media to a deterministic, entity-first path
+// and returns the resulting object key.
+//
+// TODO: rename
 func (b *Bucket) UploadAsset(ctx context.Context, podcastID, episodeGUID, assetType, filename, contentType string, body io.Reader, size int64, sourceURL string) (string, error) {
 	ext := extensionFromContentType(contentType)
 	objectKey := fmt.Sprintf("%s/%s/%s/%s%s", podcastID, episodeGUID, assetType, filename, ext)
@@ -77,21 +80,19 @@ func (b *Bucket) UploadAsset(ctx context.Context, podcastID, episodeGUID, assetT
 			"episode-guid": episodeGUID,
 		},
 	}
-
 	if sourceURL != "" {
 		opts.UserMetadata["source-url"] = sourceURL
 	}
 
-	_, err := b.client.PutObject(ctx, b.name, objectKey, body, size, opts)
-	if err != nil {
+	if _, err := b.client.PutObject(ctx, b.name, objectKey, body, size, opts); err != nil {
 		return "", fmt.Errorf("episode asset upload failed: %w", err)
 	}
-
 	return objectKey, nil
 }
 
-// UploadSystemAsset uploads a fixed platform asset at a deterministic key.
-// TODO rename
+// UploadSystemAsset uploads a fixed platform asset at a caller-provided key.
+//
+// TODO: rename
 func (b *Bucket) UploadSystemAsset(ctx context.Context, objectKey, contentType string, data []byte) (string, error) {
 	_, err := b.client.PutObject(ctx, b.name, objectKey, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{
 		ContentType: contentType,
@@ -102,6 +103,7 @@ func (b *Bucket) UploadSystemAsset(ctx context.Context, objectKey, contentType s
 	return objectKey, nil
 }
 
+// UploadJSON marshals data to JSON and stores it at the given object key.
 func (b *Bucket) UploadJSON(ctx context.Context, objectKey string, data any) error {
 	payload, err := json.Marshal(data)
 	if err != nil {
@@ -114,6 +116,8 @@ func (b *Bucket) UploadJSON(ctx context.Context, objectKey string, data any) err
 	return err
 }
 
+// Download returns a reader for the object at objectKey. It calls Stat up front
+// so a missing or inaccessible object fails here rather than on first read.
 func (b *Bucket) Download(ctx context.Context, objectKey string) (io.ReadCloser, error) {
 	obj, err := b.client.GetObject(ctx, b.name, objectKey, minio.GetObjectOptions{})
 	if err != nil {
@@ -125,6 +129,8 @@ func (b *Bucket) Download(ctx context.Context, objectKey string) (io.ReadCloser,
 	return obj, nil
 }
 
+// extensionFromContentType maps a MIME type to a file extension, falling back
+// to a generic image or audio extension when the type is unrecognized.
 func extensionFromContentType(ct string) string {
 	ct = strings.ToLower(ct)
 	switch {

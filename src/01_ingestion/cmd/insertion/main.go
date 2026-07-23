@@ -25,11 +25,14 @@ const (
 	notifyChannel     = "podcast_insert_request"
 )
 
+// InsertPayload is the request to track a feed, either from a NOTIFY event or
+// the built-in seed list. MaxEpisodes caps how many episodes get ingested.
 type InsertPayload struct {
 	URL         string `json:"url"`
 	MaxEpisodes int    `json:"max_episodes"`
 }
 
+// strPtr returns a pointer to s, or nil when s is empty (for nullable columns).
 func strPtr(s string) *string {
 	if s == "" {
 		return nil
@@ -37,15 +40,19 @@ func strPtr(s string) *string {
 	return &s
 }
 
+// intPtr returns a pointer to i.
 func intPtr(i int) *int {
 	return &i
 }
 
+// stripHTMLTags removes any html markup from feed descriptions.
 func stripHTMLTags(input string) string {
 	re := regexp.MustCompile(`<[^>]*>`)
 	return re.ReplaceAllString(input, "")
 }
 
+// extractHosts collects author/host names from a feed, checking the standard
+// authors field first and the itunes author extension as a fallback.
 func extractHosts(feed *gofeed.Feed) string {
 	var hosts []string
 	if len(feed.Authors) > 0 {
@@ -64,6 +71,8 @@ func extractHosts(feed *gofeed.Feed) string {
 	return strings.Join(hosts, ", ")
 }
 
+// main seeds the initial feed list (or takes urls from the cli), then runs the
+// discovery, polling, and notification loops concurrently until a signal.
 func main() {
 	var seedPodcasts []InsertPayload
 
@@ -88,7 +97,7 @@ func main() {
 			{URL: "https://feeds.megaphone.fm/RSV1597324942", MaxEpisodes: 1},                      // Tucker Carlson Show - ~2h
 		}
 	} else {
-		// Fallback for CLI arguments (defaults to 1 episode)
+		// cli arguments default to a single episode each
 		for _, arg := range os.Args[1:] {
 			seedPodcasts = append(seedPodcasts, InsertPayload{URL: arg, MaxEpisodes: 1})
 		}
@@ -107,6 +116,7 @@ func main() {
 
 	parser := gofeed.NewParser()
 	parser.UserAgent = "MediaLens/1.0 (Podcast Ingestion Pipeline)"
+
 	go startDiscoveryLoop(ctx, store, parser, seedPodcasts, discoveryInterval, maxDiscoveryTicks, fallbackImageURL)
 	go startPollingLoop(ctx, store, parser, pollingInterval)
 	go startNotificationListener(ctx, store, parser, fallbackImageURL)
@@ -120,6 +130,8 @@ func main() {
 	log.Println("Termination signal received. Shutting down metadata module operations...")
 }
 
+// startNotificationListener subscribes to on-demand insert requests on
+// notifyChannel and ingests each requested feed. It reconnects on any fault.
 func startNotificationListener(ctx context.Context, store *db.Store, parser *gofeed.Parser, fallbackImageURL string) {
 	dbURL := os.Getenv("POSTGRES_URL")
 
@@ -138,8 +150,7 @@ func startNotificationListener(ctx context.Context, store *db.Store, parser *gof
 			continue
 		}
 
-		_, err = conn.Exec(ctx, fmt.Sprintf("LISTEN %s", notifyChannel))
-		if err != nil {
+		if _, err := conn.Exec(ctx, fmt.Sprintf("LISTEN %s", notifyChannel)); err != nil {
 			log.Printf("[Listener] Query execution failed for LISTEN: %v", err)
 			conn.Close(ctx)
 			time.Sleep(5 * time.Second)
@@ -159,6 +170,7 @@ func startNotificationListener(ctx context.Context, store *db.Store, parser *gof
 				break
 			}
 
+			// payloads may be a json object or a bare url string
 			var payload InsertPayload
 			if err := json.Unmarshal([]byte(notification.Payload), &payload); err != nil {
 				payload.URL = strings.TrimSpace(notification.Payload)
@@ -168,13 +180,13 @@ func startNotificationListener(ctx context.Context, store *db.Store, parser *gof
 			if payload.URL == "" {
 				continue
 			}
-
 			if payload.MaxEpisodes <= 0 {
 				payload.MaxEpisodes = 1
 			}
 
 			log.Printf("[Listener] Trigger captured for feed: %s (Max Episodes: %d)", payload.URL, payload.MaxEpisodes)
 
+			// ingest off the listener goroutine so we keep reading notifications
 			go func(p InsertPayload) {
 				if err := insertSingleFeed(ctx, store, parser, p.URL, fallbackImageURL, p.MaxEpisodes); err != nil {
 					log.Printf("[Listener] Dynamic ingestion failed for %s: %v", p.URL, err)
@@ -184,7 +196,11 @@ func startNotificationListener(ctx context.Context, store *db.Store, parser *gof
 	}
 }
 
+// insertSingleFeed registers one feed: it parses the rss, derives a stable
+// guid and cover image, writes the podcast row, and nudges the ingestion
+// worker. Feeds already tracked are skipped (though max_episodes may be raised).
 func insertSingleFeed(ctx context.Context, store *db.Store, parser *gofeed.Parser, rssURL string, fallbackImageURL string, maxEpisodes int) error {
+	// skip feeds already tracked, but bump max_episodes if the new request is larger
 	tracked, err := store.GetPodcastsForIngestion(ctx, "full")
 	if err == nil {
 		for _, p := range tracked {
@@ -206,6 +222,7 @@ func insertSingleFeed(ctx context.Context, store *db.Store, parser *gofeed.Parse
 		return fmt.Errorf("failed to parse discovered target XML structure: %w", err)
 	}
 
+	// build a stable guid: prefer the feed link, then author+title, then the url
 	guid := feed.Link
 	if itunes := feed.Extensions["itunes"]; itunes != nil && len(itunes["author"]) > 0 {
 		guid = itunes["author"][0].Value + feed.Title
@@ -214,6 +231,7 @@ func insertSingleFeed(ctx context.Context, store *db.Store, parser *gofeed.Parse
 		guid = rssURL
 	}
 
+	// resolve a cover image, falling back to the shared placeholder
 	var imageURL *string
 	if feed.Image != nil && feed.Image.URL != "" {
 		imageURL = strPtr(feed.Image.URL)
@@ -233,36 +251,23 @@ func insertSingleFeed(ctx context.Context, store *db.Store, parser *gofeed.Parse
 		publishedAt = feed.PublishedParsed
 	}
 
-	episodeCount := len(feed.Items)
-
-	var remoteUpdateTime *time.Time
-	if feed.UpdatedParsed != nil {
-		remoteUpdateTime = feed.UpdatedParsed
-	} else if feed.PublishedParsed != nil {
-		remoteUpdateTime = feed.PublishedParsed
-	} else if len(feed.Items) > 0 && feed.Items[0].PublishedParsed != nil {
-		remoteUpdateTime = feed.Items[0].PublishedParsed
-	}
-
+	// always land on some update time so downstream change detection has a value
+	remoteUpdateTime := resolveRemoteUpdateTime(feed)
 	if remoteUpdateTime == nil {
 		now := time.Now()
 		remoteUpdateTime = &now
 	}
-
 	truncated := remoteUpdateTime.Truncate(time.Second)
 	remoteUpdateTime = &truncated
-
-	hosts := extractHosts(feed)
-	cleanDescription := stripHTMLTags(feed.Description)
 
 	err = store.InsertPodcast(
 		ctx,
 		guid,
-		strPtr(hosts),
+		strPtr(extractHosts(feed)),
 		rssURL,
 		feed.Title,
-		strPtr(cleanDescription),
-		intPtr(episodeCount),
+		strPtr(stripHTMLTags(feed.Description)),
+		intPtr(len(feed.Items)),
 		feed.Categories,
 		imageURL,
 		publishedAt,
@@ -278,6 +283,22 @@ func insertSingleFeed(ctx context.Context, store *db.Store, parser *gofeed.Parse
 	return nil
 }
 
+// resolveRemoteUpdateTime picks the best available timestamp from a feed
+func resolveRemoteUpdateTime(feed *gofeed.Feed) *time.Time {
+	if feed.UpdatedParsed != nil {
+		return feed.UpdatedParsed
+	}
+	if feed.PublishedParsed != nil {
+		return feed.PublishedParsed
+	}
+	if len(feed.Items) > 0 && feed.Items[0].PublishedParsed != nil {
+		return feed.Items[0].PublishedParsed
+	}
+	return nil
+}
+
+// startDiscoveryLoop periodically scans the seed list for feeds not yet tracked
+// and registers them. It runs one pass immediately, then repeats on interval.
 func startDiscoveryLoop(ctx context.Context, store *db.Store, parser *gofeed.Parser, seedPodcasts []InsertPayload, interval time.Duration, maxDiscoverPerTick int, fallbackImageURL string) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -295,6 +316,8 @@ func startDiscoveryLoop(ctx context.Context, store *db.Store, parser *gofeed.Par
 	}
 }
 
+// runDiscoveryPass registers any untracked seed feeds, up to maxDiscover per
+// pass to avoid hammering the network and database in one burst.
 func runDiscoveryPass(ctx context.Context, store *db.Store, parser *gofeed.Parser, seedPodcasts []InsertPayload, maxDiscover int, fallbackImageURL string) {
 	log.Println("[Discovery] Starting discovery cycle...")
 
@@ -304,6 +327,7 @@ func runDiscoveryPass(ctx context.Context, store *db.Store, parser *gofeed.Parse
 		return
 	}
 
+	// index tracked feeds by url so we can skip ones we already know
 	trackedMap := make(map[string]bool)
 	for _, p := range tracked {
 		trackedMap[p.FeedURL] = true
@@ -329,6 +353,8 @@ func runDiscoveryPass(ctx context.Context, store *db.Store, parser *gofeed.Parse
 	log.Printf("[Discovery] Cycle finished. Registered %d new podcast targets.", discoveredCount)
 }
 
+// startPollingLoop periodically re-checks tracked feeds for metadata changes.
+// It runs one pass immediately, then repeats on interval.
 func startPollingLoop(ctx context.Context, store *db.Store, parser *gofeed.Parser, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -346,6 +372,8 @@ func startPollingLoop(ctx context.Context, store *db.Store, parser *gofeed.Parse
 	}
 }
 
+// runPollingPass re-fetches every tracked feed and syncs changed metadata
+// (title, description, hosts, update time) back into the database.
 func runPollingPass(ctx context.Context, store *db.Store, parser *gofeed.Parser) {
 	log.Println("[Poller] Starting change-detection polling cycle...")
 
@@ -354,7 +382,6 @@ func runPollingPass(ctx context.Context, store *db.Store, parser *gofeed.Parser)
 		log.Printf("[Poller] Error retrieving podcasts for tracking sync: %v", err)
 		return
 	}
-
 	if len(podcasts) == 0 {
 		log.Println("[Poller] No tracked podcasts found in database. Skipping cycle.")
 		return
@@ -374,15 +401,7 @@ func runPollingPass(ctx context.Context, store *db.Store, parser *gofeed.Parser)
 			continue
 		}
 
-		var remoteUpdateTime *time.Time
-		if feed.UpdatedParsed != nil {
-			remoteUpdateTime = feed.UpdatedParsed
-		} else if feed.PublishedParsed != nil {
-			remoteUpdateTime = feed.PublishedParsed
-		} else if len(feed.Items) > 0 && feed.Items[0].PublishedParsed != nil {
-			remoteUpdateTime = feed.Items[0].PublishedParsed
-		}
-
+		remoteUpdateTime := resolveRemoteUpdateTime(feed)
 		if remoteUpdateTime != nil {
 			truncated := remoteUpdateTime.Truncate(time.Second)
 			remoteUpdateTime = &truncated
@@ -393,10 +412,7 @@ func runPollingPass(ctx context.Context, store *db.Store, parser *gofeed.Parser)
 			guid = itunes["author"][0].Value + feed.Title
 		}
 
-		hosts := extractHosts(feed)
-		cleanDescription := stripHTMLTags(feed.Description)
-
-		updated, err := store.SyncPodcastMetadata(ctx, p.ID, guid, feed.Title, strPtr(cleanDescription), strPtr(hosts), remoteUpdateTime)
+		updated, err := store.SyncPodcastMetadata(ctx, p.ID, guid, feed.Title, strPtr(stripHTMLTags(feed.Description)), strPtr(extractHosts(feed)), remoteUpdateTime)
 		if err != nil {
 			log.Printf("[Poller] Failed to sync metadata for ID %s: %v", p.ID, err)
 			continue
@@ -416,6 +432,8 @@ func runPollingPass(ctx context.Context, store *db.Store, parser *gofeed.Parser)
 	}
 }
 
+// sendIngestionTrigger fires a pg_notify on "ingestion_ready" to wake the
+// ingestion worker. Failures are logged but not fatal.
 func sendIngestionTrigger(ctx context.Context, dbURL, mode string) {
 	conn, err := pgx.Connect(ctx, dbURL)
 	if err != nil {
@@ -425,10 +443,9 @@ func sendIngestionTrigger(ctx context.Context, dbURL, mode string) {
 	defer conn.Close(ctx)
 
 	payload := fmt.Sprintf(`{"load_mode": "%s"}`, mode)
-	_, err = conn.Exec(ctx, "SELECT pg_notify('ingestion_ready', $1)", payload)
-	if err != nil {
+	if _, err := conn.Exec(ctx, "SELECT pg_notify('ingestion_ready', $1)", payload); err != nil {
 		log.Printf("[Trigger] Failed to send ingestion notification: %v", err)
-	} else {
-		log.Printf("[Trigger] Successfully sent pg_notify to ingestion worker (mode: %s)", mode)
+		return
 	}
+	log.Printf("[Trigger] Successfully sent pg_notify to ingestion worker (mode: %s)", mode)
 }

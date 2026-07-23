@@ -1,7 +1,6 @@
 FROM python:3.13-slim AS builder
 WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_PYTHON=python3.13
@@ -16,12 +15,12 @@ FROM python:3.13-slim AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 
-# Only ffmpeg remains; software-properties-common and deadsnakes are removed
+# ffmpeg required for audio decoding
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	ffmpeg \
 	&& rm -rf /var/lib/apt/lists/*
 
-COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 COPY internal/python/ /app/internal/python/
