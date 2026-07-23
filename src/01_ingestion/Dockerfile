@@ -9,11 +9,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o insertion 01_ingestion/cmd/insertion/ma
 
 FROM alpine:3.20.9 AS ingestion
 WORKDIR /app
-COPY  --from=builder /app/ingestion .
+COPY --from=builder /app/ingestion .
 COPY --from=builder /app/01_ingestion/assets/ ./assets/
 CMD ["./ingestion"]
 
 FROM alpine:3.20.9 AS insertion
 WORKDIR /app
-COPY  --from=builder /app/insertion .
+COPY --from=builder /app/insertion .
 ENTRYPOINT ["./insertion"]

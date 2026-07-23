@@ -23,6 +23,9 @@ import (
 	"github.com/tilmanzzz/media-lens/internal/go/db"
 )
 
+// worker bundles the shared dependencies every ingestion cycle needs:
+// db access, the bronze bucket, an http client, a feed parser, and the
+// key of the fallback cover used when an episode has no usable image.
 type worker struct {
 	store            *db.Store
 	bronze           *blob.Bucket
@@ -31,10 +34,13 @@ type worker struct {
 	fallbackImageURL string
 }
 
+// triggerPayload is the json shape carried by an "ingestion_ready" notification.
 type triggerPayload struct {
 	LoadMode string `json:"load_mode"`
 }
 
+// main boots the worker, starts the notification listener, and blocks
+// until an interrupt or termination signal arrives.
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -58,10 +64,11 @@ func main() {
 	log.Println("Termination signal received. Shutting down ingestion worker...")
 }
 
+// listenForTriggers keeps the notification listener alive, reconnecting
+// with a fixed backoff whenever the underlying connection drops.
 func listenForTriggers(ctx context.Context, w *worker, pgURL string) {
 	for {
-		err := listenLoop(ctx, w, pgURL)
-		if err != nil {
+		if err := listenLoop(ctx, w, pgURL); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
@@ -71,6 +78,9 @@ func listenForTriggers(ctx context.Context, w *worker, pgURL string) {
 	}
 }
 
+// listenLoop opens a dedicated connection, subscribes to "ingestion_ready",
+// and runs an ingestion cycle for every valid notification. It returns on
+// context cancellation (nil) or any connection error (so the caller can retry).
 func listenLoop(ctx context.Context, w *worker, pgURL string) error {
 	conn, err := pgx.Connect(ctx, pgURL)
 	if err != nil {
@@ -78,11 +88,11 @@ func listenLoop(ctx context.Context, w *worker, pgURL string) error {
 	}
 	defer conn.Close(ctx)
 
-	_, err = conn.Exec(ctx, "LISTEN ingestion_ready")
-	if err != nil {
+	if _, err := conn.Exec(ctx, "LISTEN ingestion_ready"); err != nil {
 		return fmt.Errorf("failed to execute LISTEN: %w", err)
 	}
 
+	// keep the connection alive while idle
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -112,6 +122,7 @@ func listenLoop(ctx context.Context, w *worker, pgURL string) error {
 				continue
 			}
 
+			// default to a delta run for anything that isn't explicitly "full"
 			mode := payload.LoadMode
 			if mode != "full" && mode != "delta" {
 				mode = "delta"
@@ -123,13 +134,16 @@ func listenLoop(ctx context.Context, w *worker, pgURL string) error {
 	}
 }
 
+// runIngestionCycle processes every target podcast for one batch: it opens a
+// pipeline batch, fetches and ingests each feed, flushes the collected episodes
+// in one write, then marks the batch success or failed.
 func runIngestionCycle(ctx context.Context, w *worker, loadMode string) {
 	batchID, err := w.store.CreatePipelineBatch(ctx, "ingestion", loadMode)
 	if err != nil {
 		log.Printf("Failed to start batch: %v", err)
 		return
 	}
-	fmt.Printf("Started pipeline batch [%s] mode: %s\n", batchID, loadMode)
+	log.Printf("Started pipeline batch [%s] mode: %s", batchID, loadMode)
 
 	podcasts, err := w.store.GetPodcastsForIngestion(ctx, loadMode)
 	if err != nil {
@@ -138,10 +152,10 @@ func runIngestionCycle(ctx context.Context, w *worker, loadMode string) {
 		return
 	}
 
+	// gather episodes across all feeds first, then flush once at the end
 	var allEpisodes []db.Episode
-
 	for _, p := range podcasts {
-		fmt.Printf("Processing feed episodes: %s\n", p.FeedURL)
+		log.Printf("Processing feed episodes: %s", p.FeedURL)
 
 		eps, err := w.processPodcast(ctx, p, loadMode, batchID)
 		if err != nil {
@@ -151,24 +165,26 @@ func runIngestionCycle(ctx context.Context, w *worker, loadMode string) {
 		allEpisodes = append(allEpisodes, eps...)
 	}
 
-	if len(allEpisodes) > 0 {
-		fmt.Printf("Flushing global batch: writing %d episodes...\n", len(allEpisodes))
+	if len(allEpisodes) == 0 {
+		log.Println("No episodes required ingestion")
+	} else {
+		log.Printf("Flushing global batch: writing %d episodes...", len(allEpisodes))
 		if err := w.flushEpisodes(ctx, allEpisodes); err != nil {
 			log.Printf("Critical database flush failed: %v", err)
 			_ = w.store.CompletePipelineBatch(ctx, batchID, "failed")
 			return
 		}
-	} else {
-		fmt.Println("No episodes required ingestion")
 	}
 
 	if err := w.store.CompletePipelineBatch(ctx, batchID, "success"); err != nil {
 		log.Printf("Failed to close batch: %v", err)
 		return
 	}
-	fmt.Printf("Successfully completed batch %s\n", batchID)
+	log.Printf("Successfully completed batch %s", batchID)
 }
 
+// setupWorker wires up all dependencies and uploads the fallback cover image.
+// Any failure here is fatal since the worker can't run without them.
 func setupWorker(ctx context.Context) *worker {
 	store, err := db.NewStore(ctx, os.Getenv("POSTGRES_URL"))
 	if err != nil {
@@ -185,6 +201,7 @@ func setupWorker(ctx context.Context) *worker {
 		log.Fatalf("minio connection failed: %v", err)
 	}
 
+	// stage the shared fallback cover once so episodes can reference it by key
 	data, err := os.ReadFile("assets/fallback_cover.png")
 	if err != nil {
 		log.Fatalf("failed to read fallback cover: %v", err)
@@ -203,12 +220,15 @@ func setupWorker(ctx context.Context) *worker {
 	}
 }
 
+// processPodcast fetches a single feed, archives the raw xml to bronze, parses
+// it, and returns the episodes that are new or changed since the last run.
 func (w *worker) processPodcast(ctx context.Context, p db.Podcast, loadMode, batchID string) ([]db.Episode, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", p.FeedURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	// mimic a podcast app so feeds that block generic clients still respond
 	req.Header.Set("User-Agent", "AppleCoreMedia/1.0.0.19E266 (iPhone; U; CPU OS 15_4_1 like Mac OS X; en_us)")
 	req.Header.Set("Accept", "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
@@ -256,6 +276,7 @@ func (w *worker) processPodcast(ctx context.Context, p db.Podcast, loadMode, bat
 		return nil, fmt.Errorf("failed fetching state map: %w", err)
 	}
 
+	// honor a per-podcast episode cap when one is configured
 	items := feed.Items
 	if p.MaxEpisodes != nil && len(items) > *p.MaxEpisodes {
 		items = items[:*p.MaxEpisodes]
@@ -276,6 +297,9 @@ func (w *worker) processPodcast(ctx context.Context, p db.Podcast, loadMode, bat
 	return processed, nil
 }
 
+// processEpisode decides whether a feed item needs ingesting and, if so,
+// uploads its audio and cover to bronze and returns the assembled Episode.
+// A nil episode (with nil error) means the item was unchanged and skipped.
 func (w *worker) processEpisode(
 	ctx context.Context,
 	p db.Podcast,
@@ -287,30 +311,26 @@ func (w *worker) processEpisode(
 		return nil, nil
 	}
 	enclosureURL := item.Enclosures[0].URL
-
 	episodeUpdated := extractEpisodeTimestamp(item)
 
+	// a full run reprocesses everything; a delta run only touches new or
+	// changed items (different enclosure url or a newer source timestamp)
 	existingEp, exists := existingEps[item.GUID]
 	isChanged := loadMode == "full" || !exists
-
 	if !isChanged {
-		if existingEp.EnclosureURL != enclosureURL {
-			isChanged = true
-		}
-		if existingEp.SourceSystemUpdatedAt.Before(episodeUpdated) {
+		if existingEp.EnclosureURL != enclosureURL || existingEp.SourceSystemUpdatedAt.Before(episodeUpdated) {
 			isChanged = true
 		}
 	}
-
 	if !isChanged {
 		return nil, nil
 	}
 
+	// this episode is being reprocessed, so retire its previous batch
 	if exists && existingEp.BatchID != "" {
 		_ = w.store.StopPreviousBatchIfNeeded(ctx, existingEp.BatchID)
 	}
 
-	// Generate safe MinIO folder name
 	storageFolderID := storageID(item.GUID)
 
 	audioKey, err := w.uploadMedia(ctx, p.ID, storageFolderID, "audio", "original", enclosureURL, "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
@@ -318,18 +338,10 @@ func (w *worker) processEpisode(
 		return nil, fmt.Errorf("audio upload failed: %w", err)
 	}
 
-	var (
-		coverKey string
-		key      string
-	)
-	imageURL := extractImageURL(item)
-
-	switch {
-	case imageURL == "":
-		coverKey = w.fallbackImageURL
-
-	default:
-		key, err = w.uploadMedia(
+	// cover is best-effort: fall back to the system image on any failure
+	coverKey := w.fallbackImageURL
+	if imageURL := extractImageURL(item); imageURL != "" {
+		key, err := w.uploadMedia(
 			ctx,
 			p.ID,
 			storageFolderID,
@@ -338,10 +350,8 @@ func (w *worker) processEpisode(
 			imageURL,
 			"image/webp,image/apng,image/*,*/*;q=0.8",
 		)
-
 		if err != nil {
 			log.Printf("warning: remote cover upload failed for %s, using fallback: %v", item.GUID, err)
-			coverKey = w.fallbackImageURL
 		} else {
 			coverKey = key
 		}
@@ -366,6 +376,8 @@ func (w *worker) processEpisode(
 	}, nil
 }
 
+// uploadMedia streams a remote asset (audio or image) straight into the bronze
+// bucket and returns its storage key.
 func (w *worker) uploadMedia(
 	ctx context.Context,
 	podcastID, episodeGUID, assetType, filename, url, acceptHeader string,
@@ -402,11 +414,15 @@ func (w *worker) uploadMedia(
 	)
 }
 
+// flushEpisodes persists a whole batch of episodes in a single bulk upsert.
 func (w *worker) flushEpisodes(ctx context.Context, eps []db.Episode) error {
 	_, err := w.store.BulkUpsertEpisodes(ctx, eps)
 	return err
 }
 
+// extractEpisodeTimestamp finds the most reliable "last changed" time for an
+// item, preferring pre-parsed times and falling back to parsing common raw
+// date formats. Returns the unix epoch when nothing usable is present.
 func extractEpisodeTimestamp(item *gofeed.Item) time.Time {
 	if item.UpdatedParsed != nil {
 		return item.UpdatedParsed.Truncate(time.Second)
@@ -420,6 +436,7 @@ func extractEpisodeTimestamp(item *gofeed.Item) time.Time {
 		rawDate = item.Published
 	}
 
+	// gofeed couldn't parse the date, so try a set of known layouts by hand
 	if rawDate != "" {
 		formats := []string{
 			time.RFC1123Z, time.RFC1123, time.RFC822Z, time.RFC822,
@@ -427,7 +444,6 @@ func extractEpisodeTimestamp(item *gofeed.Item) time.Time {
 			"Mon, 2 Jan 2006 15:04:05 -0700",
 			"2006-01-02T15:04:05-0700",
 		}
-
 		for _, format := range formats {
 			if parsed, err := time.Parse(format, strings.TrimSpace(rawDate)); err == nil {
 				return parsed.Truncate(time.Second)
@@ -439,6 +455,8 @@ func extractEpisodeTimestamp(item *gofeed.Item) time.Time {
 	return time.Unix(0, 0)
 }
 
+// extractImageURL pulls a cover image url from an item, checking the standard
+// image field first and the itunes extension second. Returns "" if neither.
 func extractImageURL(item *gofeed.Item) string {
 	if item.Image != nil {
 		return item.Image.URL
@@ -451,22 +469,26 @@ func extractImageURL(item *gofeed.Item) string {
 	return ""
 }
 
+// parseDuration converts an itunes duration ("HH:MM:SS", "MM:SS", or plain
+// seconds) into a total second count. Returns nil for empty or zero values.
 func parseDuration(val string) *int {
 	if val == "" {
 		return nil
 	}
+
 	parts := strings.Split(val, ":")
 	var total int
-	if len(parts) == 3 {
+	switch len(parts) {
+	case 3:
 		h, _ := strconv.Atoi(parts[0])
 		m, _ := strconv.Atoi(parts[1])
 		s, _ := strconv.Atoi(parts[2])
 		total = h*3600 + m*60 + s
-	} else if len(parts) == 2 {
+	case 2:
 		m, _ := strconv.Atoi(parts[0])
 		s, _ := strconv.Atoi(parts[1])
 		total = m*60 + s
-	} else {
+	default:
 		total, _ = strconv.Atoi(val)
 	}
 
@@ -476,8 +498,7 @@ func parseDuration(val string) *int {
 	return &total
 }
 
-// converts any arbitrary string (like a URL-based GUID)
-// into a clean, 64-character hex string safe for MinIO/S3 object keys.
+// storageID hashes an arbitrary guid into a hex string safe for use as an s3/minio object key
 func storageID(guid string) string {
 	hash := sha256.Sum256([]byte(guid))
 	return hex.EncodeToString(hash[:])
